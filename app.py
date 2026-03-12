@@ -1,0 +1,710 @@
+from flask import Flask, render_template, request, jsonify
+
+import urllib.request
+from xml.etree import ElementTree
+import sqlite3
+import re
+from functools import lru_cache
+from werkzeug.middleware.proxy_fix import ProxyFix
+import os
+import json
+import threading
+import time
+
+
+def load_env_file(path='.env'):
+    if not os.path.exists(path):
+        return
+
+    try:
+        with open(path, 'r', encoding='utf-8') as env_file:
+            for raw_line in env_file:
+                line = raw_line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, value = line.split('=', 1)
+                key = key.strip()
+                value = value.strip()
+                if not key:
+                    continue
+                if value[:1] == value[-1:] and value[:1] in {'"', "'"}:
+                    value = value[1:-1]
+                os.environ.setdefault(key, value)
+    except OSError as exc:
+        print(f'Failed to load .env: {exc}')
+
+
+load_env_file()
+
+app = Flask(__name__)
+# 信任一层反向代理转发的 header (用于获取客户端真实 IP)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+DB_PATH = 'lottery.db'
+
+# ========================================
+# 企业微信消息推送配置
+# 从 .env 或系统环境变量读取；未配置时保持为空
+# ========================================
+WX_CORPID = os.environ.get('WX_CORPID', '')
+WX_CORPSECRET = os.environ.get('WX_CORPSECRET', '')
+WX_AGENTID = os.environ.get('WX_AGENTID', '')
+WX_TOUSER = os.environ.get('WX_TOUSER', '')
+# ========================================
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS lottery_history (
+            expect TEXT PRIMARY KEY,
+            opencode TEXT NOT NULL,
+            opentime TEXT NOT NULL
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS dadi_base_sets (
+            slot INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            numbers_text TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    for slot in range(1, 5):
+        cursor.execute(
+            'INSERT OR IGNORE INTO dadi_base_sets (slot, name, numbers_text) VALUES (?, ?, ?)',
+            (slot, f'大底{slot}', '')
+        )
+    
+    # 访问日志表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS access_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip TEXT,
+            path TEXT,
+            method TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    
+    # Auto fetch if empty
+    cursor.execute('SELECT COUNT(*) as count FROM lottery_history')
+    row = cursor.fetchone()
+    if row and row['count'] == 0:
+        print("Database is empty, fetching initial data...")
+        try:
+            url = 'https://kaijiang.500.com/static/info/kaijiang/xml/plw/list.xml'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                xml_data = response.read().decode('utf-8')
+            
+            root = ElementTree.fromstring(xml_data)
+            for xml_row in root.findall('row'):
+                expect = xml_row.get('expect')
+                opencode = xml_row.get('opencode')
+                opentime = xml_row.get('opentime', '')
+                if expect and opencode:
+                    digits = opencode.replace(',', '').strip()
+                    if len(digits) == 5:
+                        cursor.execute(
+                            'INSERT OR IGNORE INTO lottery_history (expect, opencode, opentime) VALUES (?, ?, ?)',
+                            (expect, digits, opentime)
+                        )
+            conn.commit()
+            print("Initial data fetched successfully.")
+        except Exception as e:
+            print(f"Failed to fetch initial data: {e}")
+            
+    conn.close()
+
+# Initialize DB on startup
+init_db()
+
+@app.before_request
+def log_request_info():
+    # 忽略静态文件或 favicon 等无意义的请求
+    if request.path.startswith('/static/') or request.path == '/favicon.ico':
+        return
+    
+    ip = request.remote_addr
+    path = request.path
+    method = request.method
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO access_log (ip, path, method) VALUES (?, ?, ?)', (ip, path, method))
+    conn.commit()
+    conn.close()
+
+def send_wechat_message(content):
+    if WX_CORPID.startswith('你的') or not WX_CORPID:
+        return
+    
+    try:
+        title, description = content
+        # 获取 access_token
+        token_url = f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={WX_CORPID}&corpsecret={WX_CORPSECRET}"
+        req = urllib.request.Request(token_url)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            res_data = json.loads(response.read().decode('utf-8'))
+            if res_data.get('errcode') != 0:
+                print("获取微信token失败:", res_data)
+                return
+            token = res_data.get('access_token')
+            
+        # 发送消息
+        send_url = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={token}"
+        msg_data = {
+            "touser": WX_TOUSER,
+            "msgtype": "textcard",
+            "agentid": int(WX_AGENTID),
+            "textcard": {
+                "title": title,
+                "description": description,
+                "url": "http://cwh868.ctirad.fun",
+                "btntxt": "详情"
+            }
+        }
+        
+        req = urllib.request.Request(send_url, data=json.dumps(msg_data).encode('utf-8'), headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            send_res = json.loads(response.read().decode('utf-8'))
+            if send_res.get('errcode') != 0:
+                print("发送微信消息失败:", send_res)
+    except Exception as e:
+        print("微信推送出现异常:", e)
+
+def wechat_push_worker():
+    while True:
+        time.sleep(60)
+        # 检查是否配置了企业微信信息
+        if WX_CORPID.startswith('你的') or not WX_CORPID:
+            continue
+            
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            # 获取最近 1 分钟内的访问记录
+            cursor.execute("SELECT ip, path, method, datetime(created_at, 'localtime') as local_time FROM access_log WHERE created_at >= datetime('now', '-1 minute') ORDER BY created_at DESC")
+            rows = cursor.fetchall()
+            
+            if rows:
+                title = f"【cwh868】新访问记录 (共 {len(rows)} 条)"
+                description = "<div class=\"gray\">最近 1 分钟内的访问：</div>"
+                for row in rows[:20]:
+                    # 截取路径，并仅显示时间部分(HH:MM:SS)
+                    time_str = str(row['local_time']).split(' ')[1] if ' ' in str(row['local_time']) else row['local_time']
+                    path_str = row['path'] if len(row['path']) < 40 else row['path'][:37] + '...'
+                    description += f"<div class=\"normal\">{time_str} {row['ip']} {row['method']} {path_str}</div>"
+                
+                if len(rows) > 20:
+                    description += "<div class=\"highlight\">...... 省略剩余记录</div>"
+                    
+                send_wechat_message((title, description))
+                
+            # 清理 7 天前的过期访问日志，避免数据库过大
+            cursor.execute("DELETE FROM access_log WHERE created_at < datetime('now', '-7 days')")
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print("微信推送后台任务异常:", e)
+
+# 启动后台推送线程
+push_thread = threading.Thread(target=wechat_push_worker, daemon=True)
+push_thread.start()
+
+def normalize_dadi_numbers(raw_input):
+    if raw_input is None:
+        return [], []
+
+    tokens = []
+    if isinstance(raw_input, list):
+        for item in raw_input:
+            parts = re.split(r'[\s,，;；]+', str(item or '').strip())
+            tokens.extend(parts)
+    else:
+        tokens = re.split(r'[\s,，;；]+', str(raw_input).strip())
+
+    numbers = []
+    invalid = []
+    seen = set()
+    for token in tokens:
+        token = token.strip()
+        if not token:
+            continue
+        if re.fullmatch(r'\d{3}', token):
+            if token not in seen:
+                seen.add(token)
+                numbers.append(token)
+        else:
+            invalid.append(token)
+    return numbers, invalid
+
+def load_dadi_base_sets():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT slot, name, numbers_text FROM dadi_base_sets ORDER BY slot')
+    rows = cursor.fetchall()
+
+    existing_slots = {int(row['slot']) for row in rows}
+    if len(existing_slots) < 4:
+        for slot in range(1, 5):
+            if slot not in existing_slots:
+                cursor.execute(
+                    'INSERT OR IGNORE INTO dadi_base_sets (slot, name, numbers_text) VALUES (?, ?, ?)',
+                    (slot, f'大底{slot}', '')
+                )
+        conn.commit()
+        cursor.execute('SELECT slot, name, numbers_text FROM dadi_base_sets ORDER BY slot')
+        rows = cursor.fetchall()
+
+    base_sets = []
+    for row in rows:
+        numbers, _ = normalize_dadi_numbers(row['numbers_text'] or '')
+        slot = int(row['slot'])
+        base_sets.append({
+            'slot': slot,
+            'name': row['name'] or f'大底{slot}',
+            'numbers': numbers
+        })
+    conn.close()
+    return base_sets
+
+def compute_dadi_transform(raw_parsed, digit_len, base_sets):
+    total_lines = len(raw_parsed)
+    transform_bases = []
+
+    for base in base_sets:
+        numbers = base['numbers']
+        counts = {}
+        offsets = []
+        total_sets = 0
+
+        if digit_len >= 3 and numbers:
+            # Set 1: keep original base unchanged.
+            original_set = set(numbers)
+            offsets.append({'period': 0, 'offset': [0, 0, 0], 'is_original': True})
+            total_sets += 1
+            for code in original_set:
+                counts[code] = counts.get(code, 0) + 1
+
+            # Set 2..20: 19 transformed sets by latest 1..19 period sums.
+            for k in range(1, 20):
+                if total_lines < k:
+                    break
+                window = raw_parsed[total_lines - k:total_lines]
+                offset = [sum(row[pos] for row in window) % 10 for pos in range(3)]
+                offsets.append({'period': k, 'offset': offset, 'is_original': False})
+
+                transformed_set = set()
+                for num in numbers:
+                    conv = ''.join(str((int(num[pos]) - offset[pos]) % 10) for pos in range(3))
+                    transformed_set.add(conv)
+
+                total_sets += 1
+                for conv in transformed_set:
+                    counts[conv] = counts.get(conv, 0) + 1
+
+        transform_bases.append({
+            'slot': base['slot'],
+            'name': base['name'],
+            'sourceCount': len(numbers),
+            'totalSets': total_sets,
+            'counts': counts,
+            'offsets': offsets
+        })
+
+    return {'bases': transform_bases}
+
+@lru_cache(maxsize=128)
+def compute_dadi(k_period, n_lines, raw_parsed_tuple, L):
+    if n_lines < k_period + 1:
+        return None
+        
+    parsed_k = []
+    for i in range(n_lines - k_period + 1):
+        window = raw_parsed_tuple[i:i + k_period]
+        summed_row = []
+        for pos in range(L):
+            summed_row.append(sum(row[pos] for row in window) % 10)
+        parsed_k.append(summed_row)
+        
+    if len(parsed_k) < 3:
+        return None
+        
+    def extract_top3_unique(digits_row):
+        seen = set()
+        res = []
+        for d in digits_row[:3]:
+            if d not in seen:
+                seen.add(d)
+                res.append(d)
+        return tuple(res)
+        
+    group1 = extract_top3_unique(parsed_k[-1])
+    group2 = extract_top3_unique(parsed_k[-2])
+    group3 = extract_top3_unique(parsed_k[-3])
+    
+    all_app = set(group1 + group2 + group3)
+    group4 = tuple(d for d in range(10) if d not in all_app)
+    
+    group5 = set()
+    pool_234 = set(group2 + group3 + group4)
+    for x in group1:
+        for y in pool_234: group5.add(tuple(sorted((x, y))))
+    pool_34 = set(group3 + group4)
+    for x in group2:
+        for y in pool_34: group5.add(tuple(sorted((x, y))))
+    for x in group3:
+        for y in group4: group5.add(tuple(sorted((x, y))))
+        
+    dadi = []
+    offset_all = [0] * L
+    if k_period > 1:
+        n_minus_1_window = raw_parsed_tuple[n_lines - (k_period - 1):]
+        for pos in range(L):
+            offset_all[pos] = sum(row[pos] for row in n_minus_1_window) % 10
+            
+    # 将 group5 转为 tuple 列表，方便遍历
+    group5_list = list(group5)
+            
+    for num in range(1000):
+        # 优化：使用数学运算替代字符串转化
+        d1 = num // 100
+        d2 = (num // 10) % 10
+        d3 = num % 10
+        digits = (d1, d2, d3)
+        
+        valid = False
+        for a, b in group5_list:
+            if a == b:
+                if digits.count(a) >= 2:
+                    valid = True
+                    break
+            else:
+                if a in digits and b in digits:
+                    valid = True
+                    break
+        if valid:
+            if k_period > 1:
+                final_d = ((digits[pos] - offset_all[pos]) % 10 for pos in range(min(3, len(digits))))
+                final_d_list = list(final_d)
+                dadi.append(f"{final_d_list[0]}{final_d_list[1]}{final_d_list[2]}")
+            else:
+                dadi.append(f"{d1}{d2}{d3}")
+                
+    dadi = sorted(list(set(dadi)))
+    return {
+        'group1': list(group1), 'group2': list(group2), 'group3': list(group3), 'group4': list(group4),
+        'group5': [list(p) for p in group5],
+        'dadi': dadi,
+        'offsetApplied': k_period > 1,
+        'offsets': list(offset_all) if k_period > 1 else None
+    }
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/api/dadi_bases', methods=['GET'])
+def get_dadi_bases():
+    try:
+        base_sets = load_dadi_base_sets()
+        return jsonify({
+            'success': True,
+            'bases': [
+                {
+                    'slot': base['slot'],
+                    'name': base['name'],
+                    'sourceCount': len(base['numbers'])
+                } for base in base_sets
+            ]
+        })
+    except Exception as e:
+        return jsonify({'error': f'读取大底库失败: {str(e)}'}), 500
+
+@app.route('/api/dadi_bases/<int:slot>', methods=['POST'])
+def upsert_dadi_base(slot):
+    if slot < 1 or slot > 4:
+        return jsonify({'error': 'slot 必须在 1 到 4 之间'}), 400
+
+    try:
+        default_name = f'大底{slot}'
+        name = default_name
+        numbers_input = ''
+
+        payload = request.get_json(silent=True)
+        if payload is not None:
+            name = str(payload.get('name') or default_name).strip() or default_name
+            numbers_input = payload.get('numbers', '')
+        elif 'file' in request.files:
+            file = request.files['file']
+            if not file or file.filename == '':
+                return jsonify({'error': '未选择文件'}), 400
+            try:
+                numbers_input = file.read().decode('utf-8')
+            except Exception:
+                return jsonify({'error': '文件读取失败，请确保上传的是文本文件'}), 400
+            name = (request.form.get('name') or default_name).strip() or default_name
+        else:
+            name = (request.form.get('name') or default_name).strip() or default_name
+            numbers_input = request.form.get('numbers', '')
+
+        numbers, invalid = normalize_dadi_numbers(numbers_input)
+        if invalid:
+            preview = ', '.join(invalid[:5])
+            return jsonify({'error': f'存在无效号码（需为3位数字）: {preview}'}), 400
+
+        numbers_text = '\n'.join(numbers)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            INSERT OR REPLACE INTO dadi_base_sets (slot, name, numbers_text, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ''',
+            (slot, name, numbers_text)
+        )
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'slot': slot,
+            'name': name,
+            'sourceCount': len(numbers)
+        })
+    except Exception as e:
+        return jsonify({'error': f'写入大底库失败: {str(e)}'}), 500
+
+@app.route('/api/analyze', methods=['POST'])
+def analyze():
+    if 'file' not in request.files:
+        return jsonify({'error': '未找到上传的文件'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': '未选择文件'}), 400
+        
+    try:
+        content = file.read().decode('utf-8')
+    except Exception as e:
+        return jsonify({'error': '文件读取失败，请确保上传的是文本文件'}), 400
+
+    period_sum = request.form.get('period_sum', 1, type=int)
+    if period_sum < 1 or period_sum > 20:
+        period_sum = 1
+
+    # 处理内容、过滤空白行
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    
+    if len(lines) == 0:
+        return jsonify({'error': '请输入数据进行分析（文件为空）。'}), 400
+        
+    # 获取基准位数 L
+    L = len(lines[0])
+    
+    # 验证纯数字格式并保证长度一致
+    for i, line in enumerate(lines):
+        if not line.isdigit() or len(line) != L:
+            return jsonify({'error': f'输入格式错误：第 {i + 1} 行 "{line}" 不是 {L} 位纯数字。'}), 400
+
+    if len(lines) < 2:
+        return jsonify({'error': '至少需要输入2行数据（即至少包含1行历史记录与1行最新一期）。'}), 400
+
+    n_lines = len(lines)
+    
+    # ═══ 预处理：将每行解析为数字列表 ═══
+    raw_parsed = [[int(ch) for ch in line] for line in lines]
+    
+    if period_sum > 1:
+        if n_lines < period_sum + 1:
+            return jsonify({'error': f'至少需要 {period_sum + 1} 行数据来进行 {period_sum} 期和分析。'}), 400
+            
+        parsed = []
+        for i in range(n_lines - period_sum + 1):
+            window = raw_parsed[i:i + period_sum]
+            summed_row = []
+            for pos in range(L):
+                pos_sum = sum(row[pos] for row in window) % 10
+                summed_row.append(pos_sum)
+            parsed.append(summed_row)
+        n = len(parsed)
+    else:
+        parsed = raw_parsed
+        n = len(parsed)
+    
+    # ═══ 1. 遗漏统计 ═══
+    last_appeared = [[-1] * 10 for _ in range(L)]
+    for i, digits in enumerate(parsed):
+        row_num = i + 1
+        for pos in range(L):
+            last_appeared[pos][digits[pos]] = row_num
+
+    gap_results = []
+    for pos in range(L):
+        max_gap = -1
+        candidates = []
+        for digit in range(10):
+            R = last_appeared[pos][digit]
+            gap = n if R == -1 else n - R
+            if gap > max_gap:
+                max_gap = gap
+                candidates = [digit]
+            elif gap == max_gap:
+                candidates.append(digit)
+        gap_results.append({
+            'position': pos + 1,
+            'maxGap': max_gap,
+            'candidates': candidates
+        })
+
+    # 仅保留遗漏统计、大底生成和容错分析
+
+    # ═══ 6. 大底生成 (DaDi Generation) ═══
+    # 将 raw_parsed 转换为 tuple 以便缓存
+    raw_parsed_tuple = tuple(tuple(row) for row in raw_parsed)
+    dadi_results = compute_dadi(period_sum, n_lines, raw_parsed_tuple, L) or {}
+    
+    # ═══ 7. 大底容错统计 (DaDi Fault Tolerance) & 全局遗漏预警 ═══
+    # 计算 1 到 20 期的所有各自大底及遗漏预警
+    dadi_fault_tolerance = {'total_sets': 0, 'counts': {}}
+    danger_periods = []
+    danger_period_gaps = {}
+    
+    for k in range(1, 21):
+        # 1. 大底部分
+        res_k = compute_dadi(k, n_lines, raw_parsed_tuple, L)
+        if res_k and 'dadi' in res_k:
+            dadi_fault_tolerance['total_sets'] += 1
+            for num in res_k['dadi']:
+                dadi_fault_tolerance['counts'][num] = dadi_fault_tolerance['counts'].get(num, 0) + 1
+            
+            # 2. 检查遗漏预警
+            pk = []
+            if k > 1:
+                for i in range(len(raw_parsed) - k + 1):
+                    window = raw_parsed[i:i + k]
+                    pk.append([sum(row[p] for row in window) % 10 for p in range(L)])
+            else:
+                pk = raw_parsed
+
+            nk = len(pk)
+            max_gap_for_k = 0
+            if nk > 0:
+                last_appeared_k = [[-1] * 10 for _ in range(min(3, L))]
+                for i, digits in enumerate(pk):
+                    row_num = i + 1
+                    for pos in range(min(3, L)):
+                        last_appeared_k[pos][digits[pos]] = row_num
+
+                for pos in range(min(3, L)):
+                    for digit in range(10):
+                        last_i = last_appeared_k[pos][digit]
+                        gap = nk if last_i == -1 else nk - last_i
+                        if gap > max_gap_for_k:
+                            max_gap_for_k = gap
+
+            if max_gap_for_k > 40:
+                danger_periods.append(k)
+                danger_period_gaps[k] = max_gap_for_k
+
+    transformed_data = ["".join(map(str, row)) for row in (parsed if period_sum > 1 else raw_parsed)]
+    base_sets = load_dadi_base_sets()
+    dadi_transform = compute_dadi_transform(raw_parsed, L, base_sets)
+
+    return jsonify({
+        'totalFiles': 1,
+        'totalLines': n_lines,
+        'parsedData': transformed_data,
+        'gapAnalysis': gap_results,
+        'dadiAnalysis': dadi_results,
+        'dadiFaultTolerance': dadi_fault_tolerance,
+        'dadiTransform': dadi_transform,
+        'dangerPeriods': danger_periods,
+        'dangerPeriodGaps': danger_period_gaps,
+        'offsets': dadi_results.get('offsets') if dadi_results else None,
+        'periodSum': period_sum
+    })
+
+@app.route('/api/update_history', methods=['POST', 'GET'])
+def update_history():
+    try:
+        url = 'https://kaijiang.500.com/static/info/kaijiang/xml/plw/list.xml'
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            xml_data = response.read().decode('utf-8')
+        
+        root = ElementTree.fromstring(xml_data)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        added_count = 0
+        for xml_row in root.findall('row'):
+            expect = xml_row.get('expect')
+            opencode = xml_row.get('opencode')
+            opentime = xml_row.get('opentime', '')
+            if expect and opencode:
+                digits = opencode.replace(',', '').strip()
+                if len(digits) == 5:
+                    cursor.execute(
+                        'INSERT OR IGNORE INTO lottery_history (expect, opencode, opentime) VALUES (?, ?, ?)',
+                        (expect, digits, opentime)
+                    )
+                    added_count += cursor.rowcount
+                        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'added_count': added_count, 'message': f'成功更新了 {added_count} 条新数据'})
+    except Exception as e:
+        return jsonify({'error': f'抓取开奖数据失败: {str(e)}'}), 500
+
+@app.route('/api/get_history', methods=['GET'])
+def get_history():
+    try:
+        limit = request.args.get('limit', 300, type=int)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 获取最新的 limit 条数据，按期号倒序排（最前面的是最新的）
+        cursor.execute('''
+            SELECT expect, opencode, opentime FROM lottery_history
+            ORDER BY expect DESC
+            LIMIT ?
+        ''', (limit,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        latest_time = rows[0]['opentime'] if rows else ""
+        
+        lines = [row['opencode'] for row in rows]
+        expects = [row['expect'] for row in rows]
+
+        # 反转列表，确保时间顺序从旧到新 (最后一行为最新一期)
+        lines.reverse()
+        expects.reverse()
+        
+        if not lines:
+            return jsonify({'error': '数据库中没有开奖数据'}), 404
+            
+        return jsonify({
+            'success': True,
+            'data': lines,
+            'expects': expects,
+            'latest_time': latest_time,
+        })
+    except Exception as e:
+        return jsonify({'error': f'读取历史数据失败: {str(e)}'}), 500
+
+if __name__ == '__main__':
+    app.run( host='0.0.0.0', port=5002)
