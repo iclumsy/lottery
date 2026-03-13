@@ -50,6 +50,10 @@ WX_CORPID = os.environ.get('WX_CORPID', '')
 WX_CORPSECRET = os.environ.get('WX_CORPSECRET', '')
 WX_AGENTID = os.environ.get('WX_AGENTID', '')
 WX_TOUSER = os.environ.get('WX_TOUSER', '')
+try:
+    PUSH_INTERVAL_MINUTES = int(os.environ.get('PUSH_INTERVAL_MINUTES', 5))
+except ValueError:
+    PUSH_INTERVAL_MINUTES = 5
 # ========================================
 
 def get_db_connection():
@@ -180,9 +184,31 @@ def send_wechat_message(content):
     except Exception as e:
         print("微信推送出现异常:", e)
 
+@lru_cache(maxsize=1024)
+def get_ip_location(ip):
+    if not ip or ip.startswith('127.') or ip.startswith('192.168.') or ip.startswith('10.'):
+        return '本地网络'
+    try:
+        url = f"http://ip-api.com/json/{ip}?lang=zh-CN"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            if data.get('status') == 'success':
+                region = data.get('regionName', '')
+                city = data.get('city', '')
+                loc = f"{region} {city}".strip()
+                return loc if loc else data.get('country', '未知')
+    except Exception:
+        pass
+    return '未知'
+
 def wechat_push_worker():
     while True:
-        time.sleep(60)
+        interval = PUSH_INTERVAL_MINUTES
+        if interval < 1:
+            interval = 1
+        time.sleep(interval * 60)
+        
         # 检查是否配置了企业微信信息
         if WX_CORPID.startswith('你的') or not WX_CORPID:
             continue
@@ -190,18 +216,20 @@ def wechat_push_worker():
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            # 获取最近 1 分钟内的访问记录
-            cursor.execute("SELECT ip, path, method, datetime(created_at, 'localtime') as local_time FROM access_log WHERE created_at >= datetime('now', '-1 minute') ORDER BY created_at DESC")
+            # 获取最近 interval 分钟内的访问记录
+            cursor.execute(f"SELECT ip, path, method, datetime(created_at, 'localtime') as local_time FROM access_log WHERE created_at >= datetime('now', '-{interval} minute') ORDER BY created_at DESC")
             rows = cursor.fetchall()
             
             if rows:
                 title = f"【cwh868】新访问记录 (共 {len(rows)} 条)"
-                description = "<div class=\"gray\">最近 1 分钟内的访问：</div>"
+                description = f"<div class=\"gray\">最近 {interval} 分钟内的访问：</div>"
                 for row in rows[:20]:
                     # 截取路径，并仅显示时间部分(HH:MM:SS)
                     time_str = str(row['local_time']).split(' ')[1] if ' ' in str(row['local_time']) else row['local_time']
                     path_str = row['path'] if len(row['path']) < 40 else row['path'][:37] + '...'
-                    description += f"<div class=\"normal\">{time_str} {row['ip']} {row['method']} {path_str}</div>"
+                    ip_addr = row['ip']
+                    ip_loc = get_ip_location(ip_addr)
+                    description += f"<div class=\"normal\">{time_str} {ip_addr}({ip_loc}) {row['method']} {path_str}</div>"
                 
                 if len(rows) > 20:
                     description += "<div class=\"highlight\">...... 省略剩余记录</div>"
