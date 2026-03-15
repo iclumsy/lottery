@@ -44,12 +44,20 @@ document.addEventListener('DOMContentLoaded', () => {
         normal: '正常',
         skip1: '隔 1 期',
         skip2: '隔 2 期',
+        skip3: '隔 3 期',
+        skip4: '隔 4 期',
+        skip5: '隔 5 期',
+        skip6: '隔 6 期',
         mod5: '模 5',
     };
     const MATRIX_SOURCE_MODE_SHORT_LABELS = {
         normal: '正常',
         skip1: '隔1',
         skip2: '隔2',
+        skip3: '隔3',
+        skip4: '隔4',
+        skip5: '隔5',
+        skip6: '隔6',
         mod5: '模5',
     };
     const UPDATE_BTN_BASE_TEXT = '更新开奖';
@@ -240,8 +248,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function getMatrixSourceModeStep(mode) {
         const normalized = normalizeMatrixSourceMode(mode);
-        if (normalized === 'skip1') return 2;
-        if (normalized === 'skip2') return 3;
+        const skipMatch = normalized.match(/^skip([1-6])$/);
+        if (skipMatch) {
+            return parseInt(skipMatch[1], 10) + 1;
+        }
         return 1;
     }
 
