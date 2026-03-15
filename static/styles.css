@@ -1391,15 +1391,17 @@ body.matrix-open {
     top: calc(100% + 6px);
     right: 0;
     z-index: 30;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 8px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    min-width: 100%;
+    padding: 6px;
     border: 1px solid rgba(140, 168, 208, 0.4);
-    border-radius: 999px;
+    border-radius: 14px;
     background: rgba(255, 255, 255, 0.88);
     box-shadow: 0 10px 22px rgba(22, 71, 161, 0.22);
     backdrop-filter: blur(6px);
-    white-space: nowrap;
+    white-space: normal;
 }
 
 .matrix-size-control.open .matrix-size-options {
@@ -1407,7 +1409,11 @@ body.matrix-open {
 }
 
 .matrix-size-options .matrix-size-btn {
-    min-width: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-width: 48px;
     height: 28px;
     border: 1px solid rgba(120, 149, 191, 0.45);
     border-radius: 999px;
@@ -1425,6 +1431,19 @@ body.matrix-open {
     border-color: #1f4bb0;
     background: linear-gradient(135deg, #2d6fff, #4b56f0);
     box-shadow: 0 6px 14px rgba(42, 105, 219, 0.24);
+}
+
+#matrixSourceModeControl .matrix-size-options,
+#matrixSourceModeControl .matrix-size-options .matrix-size-btn {
+    min-width: 72px;
+}
+
+#matrixSourceModeControl .matrix-size-options {
+    width: max-content;
+}
+
+#matrixSourceModeControl .matrix-size-options .matrix-size-btn {
+    white-space: nowrap;
 }
 
 .matrix-combo-info {
@@ -2563,8 +2582,10 @@ body.matrix-open {
     .matrix-size-options {
         left: 0;
         right: auto;
+        width: max-content;
+        min-width: 100%;
         max-width: calc(100vw - 20px);
-        overflow-x: auto;
+        overflow: visible;
     }
 
     .matrix-size-options .matrix-size-btn {
@@ -2572,6 +2593,11 @@ body.matrix-open {
         height: 24px;
         padding: 0 6px;
         font-size: 0.7rem;
+    }
+
+    #matrixSourceModeControl .matrix-size-options,
+    #matrixSourceModeControl .matrix-size-options .matrix-size-btn {
+        min-width: 64px;
     }
 
     .matrix-topbar-actions.menu-open .matrix-size-control.open,
@@ -2585,14 +2611,16 @@ body.matrix-open {
         position: absolute;
         top: calc(100% + 3px);
         left: 0;
-        right: 0;
-        width: auto;
-        max-width: none;
-        padding: 4px 6px;
-        overflow-x: auto;
-        overflow-y: hidden;
+        right: auto;
+        width: max-content;
+        min-width: 100%;
+        max-width: calc(100vw - 20px);
+        padding: 6px;
+        overflow-x: visible;
+        overflow-y: auto;
+        max-height: min(40vh, 280px);
         border-radius: 12px;
-        overscroll-behavior-x: contain;
+        overscroll-behavior-y: contain;
         -webkit-overflow-scrolling: touch;
     }
 

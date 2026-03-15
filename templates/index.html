@@ -106,6 +106,23 @@
                         <button id="matrixClearSearchBtn" class="matrix-search-clear-btn" type="button">清除</button>
                     </div>
                     <div class="matrix-topbar-actions">
+                        <div id="matrixSourceModeControl" class="matrix-size-control matrix-limit-control" role="group"
+                            aria-label="矩阵取号模式">
+                            <button id="matrixSourceModeToggleBtn" class="matrix-size-toggle-btn" type="button"
+                                aria-haspopup="true" aria-expanded="false">正常</button>
+                            <div class="matrix-size-options">
+                                <button class="matrix-size-btn active" data-mode="normal" type="button">正常</button>
+                                <button class="matrix-size-btn" data-mode="skip1" type="button">隔 1 期</button>
+                                <button class="matrix-size-btn" data-mode="skip2" type="button">隔 2 期</button>
+                                <button class="matrix-size-btn" data-mode="mod5" type="button">模 5</button>
+                            </div>
+                            <select id="matrixSourceModeInput" class="matrix-limit-input" hidden>
+                                <option value="normal" selected>正常</option>
+                                <option value="skip1">隔 1 期</option>
+                                <option value="skip2">隔 2 期</option>
+                                <option value="mod5">模 5</option>
+                            </select>
+                        </div>
                         <div id="matrixLimitControl" class="matrix-size-control matrix-limit-control" role="group"
                             aria-label="期数选择">
                             <button id="matrixLimitToggleBtn" class="matrix-size-toggle-btn" type="button"

@@ -7,6 +7,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const latestResultBanner = document.getElementById('latestResultBanner');
     const bannerDate = document.getElementById('bannerDate');
     const latestNumbersDisplay = document.getElementById('latestNumbersDisplay');
+    const matrixSourceModeInput = document.getElementById('matrixSourceModeInput');
+    const matrixSourceModeControl = document.getElementById('matrixSourceModeControl');
+    const matrixSourceModeToggleBtn = document.getElementById('matrixSourceModeToggleBtn');
     const matrixLimitInput = document.getElementById('matrixLimitInput');
     const matrixLimitControl = document.getElementById('matrixLimitControl');
     const matrixLimitToggleBtn = document.getElementById('matrixLimitToggleBtn');
@@ -37,6 +40,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const MATRIX_CELL_SIZE_STORAGE_KEY = 'lottery_matrix_cell_size';
     const MATRIX_MATCH_LAST_COL_MIN = 2;
     const MATRIX_MATCH_LAST_COL_MAX = 6;
+    const MATRIX_SOURCE_MODE_LABELS = {
+        normal: '正常',
+        skip1: '隔 1 期',
+        skip2: '隔 2 期',
+        mod5: '模 5',
+    };
+    const MATRIX_SOURCE_MODE_SHORT_LABELS = {
+        normal: '正常',
+        skip1: '隔1',
+        skip2: '隔2',
+        mod5: '模5',
+    };
     const UPDATE_BTN_BASE_TEXT = '更新开奖';
 
     let netLines = null;
@@ -46,9 +61,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentSourceLines = [];
     let currentSourceExpects = [];
     const matrixState = {
+        allRows: [],
+        allRowLabels: [],
         baseRows: [],
         expandedRows: [],
         rowLabels: [],
+        sourceMode: 'normal',
         selectedPositions: new Set(),
         selectedComboGroupsByPos: new Map(),
         selectedTraceGroupsByPos: new Map(),
@@ -137,6 +155,7 @@ document.addEventListener('DOMContentLoaded', () => {
             cancelAnimationFrame(matrixTableCalibrationRaf);
             matrixTableCalibrationRaf = 0;
         }
+        setMatrixSourceModeOptionsOpen(false);
         setMatrixSizeOptionsOpen(false);
         setMatrixLimitOptionsOpen(false);
         setMatrixTopbarToolsVisible(false);
@@ -205,6 +224,67 @@ document.addEventListener('DOMContentLoaded', () => {
         return normalizeLoadLimit(fromMain || fromMatrix || '300');
     }
 
+    function normalizeMatrixSourceMode(value) {
+        const normalized = String(value || '').trim();
+        return Object.prototype.hasOwnProperty.call(MATRIX_SOURCE_MODE_LABELS, normalized)
+            ? normalized
+            : 'normal';
+    }
+
+    function getMatrixSourceModeLabel(mode, compact = useCompactMatrixToolbarLabels()) {
+        const normalized = normalizeMatrixSourceMode(mode);
+        return compact
+            ? MATRIX_SOURCE_MODE_SHORT_LABELS[normalized]
+            : `取号 ${MATRIX_SOURCE_MODE_LABELS[normalized]}`;
+    }
+
+    function getMatrixSourceModeStep(mode) {
+        const normalized = normalizeMatrixSourceMode(mode);
+        if (normalized === 'skip1') return 2;
+        if (normalized === 'skip2') return 3;
+        return 1;
+    }
+
+    function transformMatrixSourceRows(rows, mode) {
+        const normalized = normalizeMatrixSourceMode(mode);
+        if (normalized !== 'mod5') {
+            return [...rows];
+        }
+        return rows.map(line => String(line || '').split('').map(ch => {
+            const digit = parseInt(ch, 10);
+            if (!Number.isFinite(digit)) return ch;
+            return String(digit % 5);
+        }).join(''));
+    }
+
+    function selectMatrixSourceRows(rows, rowLabels = [], mode = 'normal') {
+        const safeRows = Array.isArray(rows) ? rows : [];
+        const safeLabels = Array.isArray(rowLabels) && rowLabels.length === safeRows.length ? rowLabels : [];
+        const step = getMatrixSourceModeStep(mode);
+        if (step === 1) {
+            return {
+                rows: transformMatrixSourceRows(safeRows, mode),
+                rowLabels: [...safeLabels],
+            };
+        }
+
+        const selectedRows = [];
+        const selectedLabels = [];
+        for (let idx = safeRows.length - 1; idx >= 0; idx -= step) {
+            selectedRows.push(safeRows[idx]);
+            if (safeLabels.length) {
+                selectedLabels.push(safeLabels[idx]);
+            }
+        }
+        selectedRows.reverse();
+        selectedLabels.reverse();
+
+        return {
+            rows: transformMatrixSourceRows(selectedRows, mode),
+            rowLabels: safeLabels.length ? selectedLabels : [],
+        };
+    }
+
     // Load saved limit from localStorage and bind instant reload.
     const savedLimit = localStorage.getItem('lottery_load_limit');
     setLoadLimit(savedLimit || getCurrentLoadLimit());
@@ -218,6 +298,11 @@ document.addEventListener('DOMContentLoaded', () => {
         matrixLimitInput.addEventListener('change', async () => {
             const next = setLoadLimit(matrixLimitInput.value);
             await loadHistoryData(next);
+        });
+    }
+    if (matrixSourceModeInput) {
+        matrixSourceModeInput.addEventListener('change', () => {
+            applyMatrixSourceMode(matrixSourceModeInput.value);
         });
     }
 
@@ -334,12 +419,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!matrixOverlay || !matrixOverlay.classList.contains('show')) return;
         if (!rows || rows.length < 3) return;
         if (!rows.every(line => /^\d{5}$/.test(line))) return;
-        matrixState.baseRows = [...rows];
-        matrixState.expandedRows = rows.map(expandLineToNine);
-        matrixState.rowLabels = Array.isArray(rowLabels) && rowLabels.length === rows.length
+        matrixState.allRows = [...rows];
+        matrixState.allRowLabels = Array.isArray(rowLabels) && rowLabels.length === rows.length
             ? [...rowLabels]
             : [];
-        rebuildMatrixTableAndHighlights();
+        applyMatrixSourceMode(matrixState.sourceMode);
     }
 
     if (openMatrixBtn) {
@@ -431,6 +515,30 @@ document.addEventListener('DOMContentLoaded', () => {
             setMatrixTopbarToolsVisible(!matrixState.topbarToolsVisible);
         });
     }
+    if (matrixSourceModeControl) {
+        matrixSourceModeControl.addEventListener('click', e => {
+            const toggleBtn = e.target.closest('.matrix-size-toggle-btn');
+            if (toggleBtn) {
+                if (isCompactMatrixTopbar()) {
+                    setMatrixTopbarToolsVisible(true);
+                }
+                setMatrixSizeOptionsOpen(false);
+                setMatrixLimitOptionsOpen(false);
+                setMatrixSourceModeOptionsOpen(!matrixSourceModeControl.classList.contains('open'));
+                return;
+            }
+            const btn = e.target.closest('.matrix-size-btn');
+            if (!btn) return;
+            const mode = normalizeMatrixSourceMode(btn.dataset.mode);
+            if (matrixSourceModeInput) {
+                matrixSourceModeInput.value = mode;
+                matrixSourceModeInput.dispatchEvent(new Event('change', { bubbles: true }));
+            } else {
+                applyMatrixSourceMode(mode);
+            }
+            setMatrixSourceModeOptionsOpen(false);
+        });
+    }
     if (matrixSizeControl) {
         matrixSizeControl.addEventListener('click', e => {
             const toggleBtn = e.target.closest('.matrix-size-toggle-btn');
@@ -438,6 +546,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (isCompactMatrixTopbar()) {
                     setMatrixTopbarToolsVisible(true);
                 }
+                setMatrixSourceModeOptionsOpen(false);
                 setMatrixLimitOptionsOpen(false);
                 setMatrixSizeOptionsOpen(!matrixSizeControl.classList.contains('open'));
                 return;
@@ -457,6 +566,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (isCompactMatrixTopbar()) {
                     setMatrixTopbarToolsVisible(true);
                 }
+                setMatrixSourceModeOptionsOpen(false);
                 setMatrixSizeOptionsOpen(false);
                 setMatrixLimitOptionsOpen(!matrixLimitControl.classList.contains('open'));
                 return;
@@ -475,6 +585,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     document.addEventListener('click', e => {
+        if (matrixSourceModeControl && !matrixSourceModeControl.contains(e.target)) {
+            setMatrixSourceModeOptionsOpen(false);
+        }
         if (matrixSizeControl && !matrixSizeControl.contains(e.target)) {
             setMatrixSizeOptionsOpen(false);
         }
@@ -521,11 +634,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const onViewportChange = () => {
         const nextSignature = captureMatrixViewportSignature();
         syncMatrixTopbarToolsVisibility();
+        syncMatrixSourceModeControl();
         syncMatrixLimitControl();
         syncMatrixSizeControl();
         setMatrixMatchPanelVisible(matrixState.matchPanelVisible);
         setMatrixRowIdsVisible(matrixState.showRowIds);
         if (isCompactMatrixTopbar() && !matrixState.topbarToolsVisible) {
+            setMatrixSourceModeOptionsOpen(false);
             setMatrixSizeOptionsOpen(false);
             setMatrixLimitOptionsOpen(false);
         }
@@ -547,8 +662,10 @@ document.addEventListener('DOMContentLoaded', () => {
         window.visualViewport.addEventListener('scroll', onVisualViewportScroll);
     }
     applyMatrixCellSize(getPreferredMatrixCellSize(), { rebuild: false });
+    setMatrixSourceModeOptionsOpen(false);
     setMatrixSizeOptionsOpen(false);
     setMatrixLimitOptionsOpen(false);
+    syncMatrixSourceModeControl();
     syncMatrixLimitControl();
     setMatrixMatchPanelVisible(false);
     setMatrixRowIdsVisible(false);
@@ -1300,6 +1417,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const changed = matrixState.topbarToolsVisible !== nextVisible;
         matrixState.topbarToolsVisible = nextVisible;
         if (!matrixState.topbarToolsVisible) {
+            setMatrixSourceModeOptionsOpen(false);
             setMatrixSizeOptionsOpen(false);
             setMatrixLimitOptionsOpen(false);
         }
@@ -1327,6 +1445,16 @@ document.addEventListener('DOMContentLoaded', () => {
         return Math.min(88, Math.max(16, value));
     }
 
+    function setMatrixSourceModeOptionsOpen(open) {
+        if (!matrixSourceModeControl) return;
+        const nextOpen = Boolean(open);
+        matrixSourceModeControl.classList.toggle('open', nextOpen);
+        if (matrixSourceModeToggleBtn) {
+            matrixSourceModeToggleBtn.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+        }
+        syncMatrixTopbarActionsState();
+    }
+
     function setMatrixSizeOptionsOpen(open) {
         if (!matrixSizeControl) return;
         const nextOpen = Boolean(open);
@@ -1350,12 +1478,26 @@ document.addEventListener('DOMContentLoaded', () => {
     function syncMatrixTopbarActionsState() {
         if (!matrixTopbarActions) return;
         const hasOpenMenu =
+            (matrixSourceModeControl && matrixSourceModeControl.classList.contains('open')) ||
             (matrixSizeControl && matrixSizeControl.classList.contains('open')) ||
             (matrixLimitControl && matrixLimitControl.classList.contains('open'));
         matrixTopbarActions.classList.toggle('menu-open', Boolean(hasOpenMenu));
         if (matrixTopbarTools) {
             matrixTopbarTools.classList.toggle('menu-open', Boolean(hasOpenMenu));
         }
+    }
+
+    function syncMatrixSourceModeControl() {
+        if (!matrixSourceModeControl) return;
+        const modeValue = normalizeMatrixSourceMode(
+            matrixSourceModeInput ? matrixSourceModeInput.value : matrixState.sourceMode
+        );
+        if (matrixSourceModeToggleBtn) {
+            matrixSourceModeToggleBtn.textContent = getMatrixSourceModeLabel(modeValue);
+        }
+        matrixSourceModeControl.querySelectorAll('.matrix-size-btn').forEach(btn => {
+            btn.classList.toggle('active', normalizeMatrixSourceMode(btn.dataset.mode) === modeValue);
+        });
     }
 
     function syncMatrixLimitControl() {
@@ -1370,6 +1512,48 @@ document.addEventListener('DOMContentLoaded', () => {
             const btnLimit = normalizeLoadLimit(btn.dataset.limit);
             btn.classList.toggle('active', btnLimit === limitValue);
         });
+    }
+
+    function applyMatrixSourceMode(mode, options = {}) {
+        const nextMode = normalizeMatrixSourceMode(mode);
+        const { rows, rowLabels } = selectMatrixSourceRows(matrixState.allRows, matrixState.allRowLabels, nextMode);
+        if (rows.length < 3) {
+            showError('当前取号方式下可用期数不足 3 期，无法展示矩阵');
+            return false;
+        }
+
+        clearError();
+        matrixState.sourceMode = nextMode;
+        matrixState.baseRows = rows;
+        matrixState.expandedRows = rows.map(expandLineToNine);
+        matrixState.rowLabels = rowLabels.length === rows.length ? rowLabels : [];
+        matrixState.matchesByPos = new Map();
+        matrixState.searchHitKeys = new Set();
+
+        if (matrixSourceModeInput) {
+            matrixSourceModeInput.value = nextMode;
+        }
+        syncMatrixSourceModeControl();
+
+        if (options.resetSelections) {
+            matrixState.selectedPositions = new Set([1]);
+            matrixState.selectedComboGroupsByPos = new Map([[1, new Set([1, 2, 3])]]);
+            matrixState.selectedTraceGroupsByPos = new Map([[1, new Set()]]);
+            matrixState.matchesByPos = new Map();
+        }
+
+        if (options.resetSearch) {
+            matrixState.searchQuery = '';
+            matrixState.searchHitKeys = new Set();
+            if (matrixSearchInput) {
+                matrixSearchInput.value = '';
+            }
+        }
+
+        if (options.rebuild !== false && matrixOverlay && matrixOverlay.classList.contains('show')) {
+            rebuildMatrixTableAndHighlights();
+        }
+        return true;
     }
 
     function syncMatrixSizeControl() {
@@ -2055,17 +2239,16 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        matrixState.baseRows = rows;
-        matrixState.expandedRows = rows.map(expandLineToNine);
-        matrixState.rowLabels = currentSourceExpects.length === rows.length ? [...currentSourceExpects] : [];
-        matrixState.selectedPositions = new Set([1]);
-        matrixState.selectedComboGroupsByPos = new Map([[1, new Set([1, 2, 3])]]);
-        matrixState.selectedTraceGroupsByPos = new Map([[1, new Set()]]);
-        matrixState.matchesByPos = new Map();
-        matrixState.searchQuery = '';
-        matrixState.searchHitKeys = new Set();
-        if (matrixSearchInput) matrixSearchInput.value = '';
+        matrixState.allRows = [...rows];
+        matrixState.allRowLabels = currentSourceExpects.length === rows.length ? [...currentSourceExpects] : [];
+        matrixState.sourceMode = 'normal';
+        applyMatrixSourceMode('normal', {
+            resetSelections: true,
+            resetSearch: true,
+            rebuild: false,
+        });
         setMatrixSizeOptionsOpen(false);
+        setMatrixSourceModeOptionsOpen(false);
         setMatrixLimitOptionsOpen(false);
         setMatrixMatchPanelVisible(false);
         setMatrixRowIdsVisible(false);
