@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow,noarchive">
+    <title>访问日志</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f3f6fb;
+            --panel: rgba(255, 255, 255, 0.96);
+            --line: rgba(136, 157, 191, 0.32);
+            --text: #173057;
+            --muted: #617899;
+            --accent: #2458c6;
+            --accent-soft: rgba(36, 88, 198, 0.08);
+            --warn: #a63a2f;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: linear-gradient(180deg, #eef4ff 0%, var(--bg) 100%);
+            color: var(--text);
+        }
+
+        main {
+            width: min(1200px, calc(100vw - 24px));
+            margin: 0 auto;
+            padding: 18px 0 28px;
+        }
+
+        .hero,
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            box-shadow: 0 10px 28px rgba(24, 61, 128, 0.08);
+        }
+
+        .hero {
+            padding: 18px 18px 14px;
+            margin-bottom: 14px;
+        }
+
+        h1 {
+            margin: 0 0 8px;
+            font-size: 1.35rem;
+        }
+
+        .meta {
+            margin: 0;
+            color: var(--muted);
+            font-size: 0.92rem;
+            line-height: 1.6;
+        }
+
+        .warn {
+            color: var(--warn);
+            font-weight: 700;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+            margin: 14px 0;
+        }
+
+        .stat-card {
+            background: var(--accent-soft);
+            border: 1px solid rgba(36, 88, 198, 0.12);
+            border-radius: 14px;
+            padding: 12px 14px;
+        }
+
+        .stat-label {
+            display: block;
+            color: var(--muted);
+            font-size: 0.82rem;
+            margin-bottom: 6px;
+        }
+
+        .stat-value {
+            font-size: 1.2rem;
+            font-weight: 800;
+        }
+
+        .two-col {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+            gap: 14px;
+        }
+
+        .panel {
+            padding: 14px;
+        }
+
+        .panel h2 {
+            margin: 0 0 12px;
+            font-size: 1rem;
+        }
+
+        .table-wrap {
+            overflow: auto;
+            border-radius: 14px;
+            border: 1px solid var(--line);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 640px;
+            background: #fff;
+        }
+
+        th,
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(136, 157, 191, 0.2);
+            text-align: left;
+            vertical-align: top;
+            font-size: 0.92rem;
+        }
+
+        th {
+            position: sticky;
+            top: 0;
+            background: #f7faff;
+            color: var(--muted);
+            font-size: 0.8rem;
+            letter-spacing: 0.02em;
+            z-index: 1;
+        }
+
+        .path {
+            word-break: break-all;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            color: #22427a;
+        }
+
+        .method {
+            display: inline-flex;
+            min-width: 52px;
+            justify-content: center;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: rgba(36, 88, 198, 0.08);
+            color: var(--accent);
+            font-weight: 700;
+            font-size: 0.78rem;
+        }
+
+        .top-paths {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: grid;
+            gap: 8px;
+        }
+
+        .top-paths li {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 8px;
+            align-items: center;
+            padding: 10px 12px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: #fff;
+        }
+
+        .rank {
+            color: var(--muted);
+            font-weight: 700;
+            font-size: 0.8rem;
+        }
+
+        .count {
+            color: var(--accent);
+            font-weight: 800;
+            white-space: nowrap;
+        }
+
+        .empty {
+            margin: 0;
+            color: var(--muted);
+        }
+
+        @media (max-width: 900px) {
+            .stats,
+            .two-col {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <section class="hero">
+            <h1>访问日志</h1>
+            <p class="meta">该页面使用签名链接保护，链接过期时间：{{ expires_at }}</p>
+            <p class="meta warn">请勿转发该链接；过期后将自动失效。</p>
+            <div class="stats">
+                <div class="stat-card">
+                    <span class="stat-label">最近 24 小时访问</span>
+                    <span class="stat-value">{{ total_24h }}</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-label">最近 24 小时独立 IP</span>
+                    <span class="stat-value">{{ unique_ips_24h }}</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-label">当前页展示条数</span>
+                    <span class="stat-value">{{ log_limit }}</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="two-col">
+            <section class="panel">
+                <h2>最近访问</h2>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>时间</th>
+                                <th>IP</th>
+                                <th>方法</th>
+                                <th>路径</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if logs %}
+                                {% for item in logs %}
+                                <tr>
+                                    <td>{{ item['local_time'] }}</td>
+                                    <td>{{ item['ip'] }}</td>
+                                    <td><span class="method">{{ item['method'] }}</span></td>
+                                    <td class="path">{{ item['path'] }}</td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr>
+                                    <td colspan="4" class="empty">暂无访问记录</td>
+                                </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <aside class="panel">
+                <h2>最近 24 小时热门路径</h2>
+                {% if top_paths %}
+                <ol class="top-paths">
+                    {% for item in top_paths %}
+                    <li>
+                        <span class="rank">#{{ loop.index }}</span>
+                        <span class="path">{{ item['path'] }}</span>
+                        <span class="count">{{ item['count'] }} 次</span>
+                    </li>
+                    {% endfor %}
+                </ol>
+                {% else %}
+                <p class="empty">最近 24 小时暂无记录</p>
+                {% endif %}
+            </aside>
+        </section>
+    </main>
+</body>
+</html>

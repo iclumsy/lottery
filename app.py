@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, abort, make_response
 
 import urllib.request
 from xml.etree import ElementTree
@@ -10,6 +10,10 @@ import os
 import json
 import threading
 import time
+import hmac
+import hashlib
+from datetime import datetime
+from urllib.parse import urlencode
 
 
 def load_env_file(path='.env'):
@@ -50,11 +54,57 @@ WX_CORPID = os.environ.get('WX_CORPID', '')
 WX_CORPSECRET = os.environ.get('WX_CORPSECRET', '')
 WX_AGENTID = os.environ.get('WX_AGENTID', '')
 WX_TOUSER = os.environ.get('WX_TOUSER', '')
-try:
-    PUSH_INTERVAL_MINUTES = int(os.environ.get('PUSH_INTERVAL_MINUTES', 5))
-except ValueError:
-    PUSH_INTERVAL_MINUTES = 5
+PUBLIC_BASE_URL = os.environ.get('PUBLIC_BASE_URL', 'http://cwh868.ctirad.fun').strip().rstrip('/')
+ACCESS_LOG_SECRET = os.environ.get('ACCESS_LOG_SECRET', '').strip()
+ACCESS_LOG_ROUTE_PATH = '/access-logs'
+
+def get_env_int(name, default):
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+PUSH_INTERVAL_MINUTES = get_env_int('PUSH_INTERVAL_MINUTES', 5)
+ACCESS_LOG_URL_TTL_MINUTES = max(5, get_env_int('ACCESS_LOG_URL_TTL_MINUTES', 720))
+ACCESS_LOG_PAGE_LIMIT = max(20, min(1000, get_env_int('ACCESS_LOG_PAGE_LIMIT', 500)))
 # ========================================
+
+def build_access_logs_signature(expire_at):
+    payload = f'{ACCESS_LOG_ROUTE_PATH}|{expire_at}'
+    return hmac.new(
+        ACCESS_LOG_SECRET.encode('utf-8'),
+        payload.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+
+def build_access_logs_url():
+    if not PUBLIC_BASE_URL or not ACCESS_LOG_SECRET:
+        return PUBLIC_BASE_URL or ''
+
+    expire_at = int(time.time()) + (ACCESS_LOG_URL_TTL_MINUTES * 60)
+    query = urlencode({
+        'exp': expire_at,
+        'sig': build_access_logs_signature(expire_at),
+    })
+    return f'{PUBLIC_BASE_URL}{ACCESS_LOG_ROUTE_PATH}?{query}'
+
+def is_valid_access_logs_request(expire_at_raw, signature):
+    if not ACCESS_LOG_SECRET:
+        return False
+    if not expire_at_raw or not signature:
+        return False
+    if not re.fullmatch(r'\d{10,}', str(expire_at_raw)):
+        return False
+
+    expire_at = int(expire_at_raw)
+    now = int(time.time())
+    if expire_at < now:
+        return False
+    if expire_at > now + (ACCESS_LOG_URL_TTL_MINUTES * 60) + 86400:
+        return False
+
+    expected = build_access_logs_signature(expire_at)
+    return hmac.compare_digest(str(signature), expected)
 
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
@@ -152,6 +202,7 @@ def send_wechat_message(content):
     
     try:
         title, description = content
+        message_url = build_access_logs_url() or (PUBLIC_BASE_URL or 'http://127.0.0.1:5002/')
         # 获取 access_token
         token_url = f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={WX_CORPID}&corpsecret={WX_CORPSECRET}"
         req = urllib.request.Request(token_url)
@@ -171,7 +222,7 @@ def send_wechat_message(content):
             "textcard": {
                 "title": title,
                 "description": description,
-                "url": "http://cwh868.ctirad.fun",
+                "url": message_url,
                 "btntxt": "详情"
             }
         }
@@ -439,6 +490,75 @@ def compute_dadi(k_period, n_lines, raw_parsed_tuple, L):
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route(ACCESS_LOG_ROUTE_PATH)
+def access_logs_page():
+    expire_at_raw = request.args.get('exp', '').strip()
+    signature = request.args.get('sig', '').strip()
+    if not is_valid_access_logs_request(expire_at_raw, signature):
+        abort(404)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        '''
+        SELECT ip, path, method, datetime(created_at, 'localtime') AS local_time
+        FROM access_log
+        ORDER BY created_at DESC
+        LIMIT ?
+        ''',
+        (ACCESS_LOG_PAGE_LIMIT,)
+    )
+    rows = cursor.fetchall()
+
+    cursor.execute(
+        '''
+        SELECT COUNT(*) AS count, COUNT(DISTINCT ip) AS unique_ips
+        FROM access_log
+        WHERE created_at >= datetime('now', '-24 hours')
+        '''
+    )
+    stats_24h = cursor.fetchone()
+
+    cursor.execute(
+        '''
+        SELECT path, COUNT(*) AS count
+        FROM access_log
+        WHERE created_at >= datetime('now', '-24 hours')
+        GROUP BY path
+        ORDER BY count DESC, path ASC
+        LIMIT 10
+        '''
+    )
+    top_paths = cursor.fetchall()
+    conn.close()
+
+    expire_at = datetime.fromtimestamp(int(expire_at_raw)).strftime('%Y-%m-%d %H:%M:%S')
+    response = make_response(render_template(
+        'access_logs.html',
+        logs=rows,
+        expires_at=expire_at,
+        log_limit=ACCESS_LOG_PAGE_LIMIT,
+        total_24h=stats_24h['count'] if stats_24h else 0,
+        unique_ips_24h=stats_24h['unique_ips'] if stats_24h else 0,
+        top_paths=top_paths,
+    ))
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['X-Robots-Tag'] = 'noindex, nofollow, noarchive'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "base-uri 'none'; "
+        "form-action 'none'; "
+        "frame-ancestors 'none'"
+    )
+    return response
 
 @app.route('/api/dadi_bases', methods=['GET'])
 def get_dadi_bases():
