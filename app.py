@@ -214,10 +214,16 @@ def init_db():
 # Initialize DB on startup
 init_db()
 
+def should_skip_access_log(path):
+    return (
+        path.startswith('/static/')
+        or path == '/favicon.ico'
+        or path == ACCESS_LOG_ROUTE_PATH
+    )
+
 @app.before_request
 def log_request_info():
-    # 忽略静态文件或 favicon 等无意义的请求
-    if request.path.startswith('/static/') or request.path == '/favicon.ico':
+    if should_skip_access_log(request.path):
         return
     
     ip = get_client_ip()
@@ -464,7 +470,16 @@ def wechat_push_worker():
             conn = get_db_connection()
             cursor = conn.cursor()
             # 获取最近 interval 分钟内的访问记录
-            cursor.execute(f"SELECT ip, path, method, datetime(created_at, 'localtime') as local_time FROM access_log WHERE created_at >= datetime('now', '-{interval} minute') ORDER BY created_at DESC")
+            cursor.execute(
+                f'''
+                SELECT ip, path, method, datetime(created_at, 'localtime') as local_time
+                FROM access_log
+                WHERE created_at >= datetime('now', '-{interval} minute')
+                  AND path != ?
+                ORDER BY created_at DESC
+                ''',
+                (ACCESS_LOG_ROUTE_PATH,)
+            )
             rows = cursor.fetchall()
             
             if rows:
@@ -704,10 +719,11 @@ def access_logs_page():
         '''
         SELECT ip, path, method, strftime('%m-%d %H:%M:%S', created_at, 'localtime') AS local_time
         FROM access_log
+        WHERE path != ?
         ORDER BY created_at DESC
         LIMIT ?
         ''',
-        (ACCESS_LOG_PAGE_LIMIT,)
+        (ACCESS_LOG_ROUTE_PATH, ACCESS_LOG_PAGE_LIMIT)
     )
     rows = cursor.fetchall()
     logs = [dict(row) for row in rows]
@@ -723,7 +739,10 @@ def access_logs_page():
         SELECT COUNT(*) AS count, COUNT(DISTINCT ip) AS unique_ips
         FROM access_log
         WHERE created_at >= datetime('now', '-24 hours')
+          AND path != ?
         '''
+        ,
+        (ACCESS_LOG_ROUTE_PATH,)
     )
     stats_24h = cursor.fetchone()
 
@@ -732,10 +751,13 @@ def access_logs_page():
         SELECT path, COUNT(*) AS count
         FROM access_log
         WHERE created_at >= datetime('now', '-24 hours')
+          AND path != ?
         GROUP BY path
         ORDER BY count DESC, path ASC
         LIMIT 10
         '''
+        ,
+        (ACCESS_LOG_ROUTE_PATH,)
     )
     top_paths = cursor.fetchall()
     conn.close()
