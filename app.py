@@ -94,35 +94,6 @@ COUNTRY_CODE_ZH_MAP = {
     'NZ': '新西兰',
     'RU': '俄罗斯',
 }
-COUNTRY_NAME_ZH_MAP = {
-    'china': '中国',
-    'hong kong': '中国香港',
-    'macao': '中国澳门',
-    'macau': '中国澳门',
-    'taiwan': '中国台湾',
-    'united states': '美国',
-    'united states of america': '美国',
-    'usa': '美国',
-    'japan': '日本',
-    'south korea': '韩国',
-    'korea': '韩国',
-    'singapore': '新加坡',
-    'malaysia': '马来西亚',
-    'thailand': '泰国',
-    'vietnam': '越南',
-    'philippines': '菲律宾',
-    'indonesia': '印度尼西亚',
-    'india': '印度',
-    'united kingdom': '英国',
-    'uk': '英国',
-    'great britain': '英国',
-    'germany': '德国',
-    'france': '法国',
-    'canada': '加拿大',
-    'australia': '澳大利亚',
-    'new zealand': '新西兰',
-    'russia': '俄罗斯',
-}
 # ========================================
 
 def build_access_logs_signature(expire_at):
@@ -359,9 +330,7 @@ def normalize_country_name(country, country_code=''):
     country_code = str(country_code or '').strip().upper()
     if contains_cjk(country_text):
         return country_text
-    if country_code in COUNTRY_CODE_ZH_MAP:
-        return COUNTRY_CODE_ZH_MAP[country_code]
-    return COUNTRY_NAME_ZH_MAP.get(country_text.casefold(), '')
+    return COUNTRY_CODE_ZH_MAP.get(country_code, '')
 
 def finalize_location(country='', region='', city='', country_code=''):
     country_text = normalize_country_name(country, country_code)
