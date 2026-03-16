@@ -71,6 +71,58 @@ ACCESS_LOG_PAGE_LIMIT = max(20, min(1000, get_env_int('ACCESS_LOG_PAGE_LIMIT', 5
 IP_LOCATION_CACHE_TTL_HOURS = 24 * 30
 IP_LOCATION_UNKNOWN_CACHE_TTL_HOURS = 6
 IP_LOOKUP_TIMEOUT_SECONDS = 1.8
+COUNTRY_CODE_ZH_MAP = {
+    'CN': '中国',
+    'HK': '中国香港',
+    'MO': '中国澳门',
+    'TW': '中国台湾',
+    'US': '美国',
+    'JP': '日本',
+    'KR': '韩国',
+    'SG': '新加坡',
+    'MY': '马来西亚',
+    'TH': '泰国',
+    'VN': '越南',
+    'PH': '菲律宾',
+    'ID': '印度尼西亚',
+    'IN': '印度',
+    'GB': '英国',
+    'DE': '德国',
+    'FR': '法国',
+    'CA': '加拿大',
+    'AU': '澳大利亚',
+    'NZ': '新西兰',
+    'RU': '俄罗斯',
+}
+COUNTRY_NAME_ZH_MAP = {
+    'china': '中国',
+    'hong kong': '中国香港',
+    'macao': '中国澳门',
+    'macau': '中国澳门',
+    'taiwan': '中国台湾',
+    'united states': '美国',
+    'united states of america': '美国',
+    'usa': '美国',
+    'japan': '日本',
+    'south korea': '韩国',
+    'korea': '韩国',
+    'singapore': '新加坡',
+    'malaysia': '马来西亚',
+    'thailand': '泰国',
+    'vietnam': '越南',
+    'philippines': '菲律宾',
+    'indonesia': '印度尼西亚',
+    'india': '印度',
+    'united kingdom': '英国',
+    'uk': '英国',
+    'great britain': '英国',
+    'germany': '德国',
+    'france': '法国',
+    'canada': '加拿大',
+    'australia': '澳大利亚',
+    'new zealand': '新西兰',
+    'russia': '俄罗斯',
+}
 # ========================================
 
 def build_access_logs_signature(expire_at):
@@ -299,6 +351,35 @@ def format_location_parts(*parts):
         normalized_parts.append(part)
     return ' '.join(normalized_parts)
 
+def contains_cjk(text):
+    return bool(re.search(r'[\u3400-\u9fff]', str(text or '')))
+
+def normalize_country_name(country, country_code=''):
+    country_text = str(country or '').strip()
+    country_code = str(country_code or '').strip().upper()
+    if contains_cjk(country_text):
+        return country_text
+    if country_code in COUNTRY_CODE_ZH_MAP:
+        return COUNTRY_CODE_ZH_MAP[country_code]
+    return COUNTRY_NAME_ZH_MAP.get(country_text.casefold(), '')
+
+def finalize_location(country='', region='', city='', country_code=''):
+    country_text = normalize_country_name(country, country_code)
+    region_text = str(region or '').strip()
+    city_text = str(city or '').strip()
+
+    if not contains_cjk(region_text):
+        region_text = ''
+    if not contains_cjk(city_text):
+        city_text = ''
+
+    location = format_location_parts(country_text, region_text, city_text)
+    if location:
+        return location
+    if country_text:
+        return country_text
+    return '海外地址'
+
 def load_cached_ip_location(ip):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -319,7 +400,9 @@ def load_cached_ip_location(ip):
     ttl_hours = IP_LOCATION_UNKNOWN_CACHE_TTL_HOURS if row['location'] == '未知' else IP_LOCATION_CACHE_TTL_HOURS
     age_seconds = (datetime.utcnow() - updated_at).total_seconds()
     if age_seconds <= ttl_hours * 3600:
-        return row['location']
+        location = str(row['location'] or '').strip()
+        if location and (contains_cjk(location) or location == '未知'):
+            return location
     return None
 
 def save_cached_ip_location(ip, location):
@@ -341,14 +424,24 @@ def save_cached_ip_location(ip, location):
 def lookup_ip_location(ip):
     providers = (
         (
-            f'https://ipwho.is/{quote(ip)}?lang=zh',
-            lambda data: data.get('success') is True,
-            lambda data: format_location_parts(data.get('country'), data.get('region'), data.get('city'))
-        ),
-        (
             f'http://ip-api.com/json/{quote(ip)}?lang=zh-CN',
             lambda data: data.get('status') == 'success',
-            lambda data: format_location_parts(data.get('country'), data.get('regionName'), data.get('city'))
+            lambda data: finalize_location(
+                data.get('country'),
+                data.get('regionName'),
+                data.get('city'),
+                data.get('countryCode')
+            )
+        ),
+        (
+            f'https://ipwho.is/{quote(ip)}?lang=zh',
+            lambda data: data.get('success') is True,
+            lambda data: finalize_location(
+                data.get('country'),
+                data.get('region'),
+                data.get('city'),
+                data.get('country_code')
+            )
         ),
     )
 
