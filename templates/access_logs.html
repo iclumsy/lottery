@@ -144,6 +144,24 @@
             color: #22427a;
         }
 
+        .ip-cell {
+            display: grid;
+            gap: 4px;
+            min-width: 138px;
+        }
+
+        .ip-text {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            color: #1d396c;
+        }
+
+        .ip-location {
+            color: var(--muted);
+            font-size: 0.82rem;
+            line-height: 1.35;
+            word-break: break-word;
+        }
+
         .method {
             display: inline-flex;
             min-width: 52px;
@@ -230,7 +248,7 @@
                         <thead>
                             <tr>
                                 <th>时间</th>
-                                <th>IP</th>
+                                <th>IP / 地址</th>
                                 <th>方法</th>
                                 <th>路径</th>
                             </tr>
@@ -240,7 +258,12 @@
                                 {% for item in logs %}
                                 <tr>
                                     <td>{{ item['local_time'] }}</td>
-                                    <td>{{ item['ip'] }}</td>
+                                    <td>
+                                        <div class="ip-cell">
+                                            <span class="ip-text">{{ item['ip'] or '-' }}</span>
+                                            <span class="ip-location">{{ item['location'] }}</span>
+                                        </div>
+                                    </td>
                                     <td><span class="method">{{ item['method'] }}</span></td>
                                     <td class="path">{{ item['path'] }}</td>
                                 </tr>

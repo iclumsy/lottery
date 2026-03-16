@@ -4,6 +4,7 @@ import urllib.request
 from xml.etree import ElementTree
 import sqlite3
 import re
+import ipaddress
 from functools import lru_cache
 from werkzeug.middleware.proxy_fix import ProxyFix
 import os
@@ -13,7 +14,7 @@ import time
 import hmac
 import hashlib
 from datetime import datetime
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 
 def load_env_file(path='.env'):
@@ -67,6 +68,9 @@ def get_env_int(name, default):
 PUSH_INTERVAL_MINUTES = get_env_int('PUSH_INTERVAL_MINUTES', 5)
 ACCESS_LOG_URL_TTL_MINUTES = max(5, get_env_int('ACCESS_LOG_URL_TTL_MINUTES', 720))
 ACCESS_LOG_PAGE_LIMIT = max(20, min(1000, get_env_int('ACCESS_LOG_PAGE_LIMIT', 500)))
+IP_LOCATION_CACHE_TTL_HOURS = 24 * 30
+IP_LOCATION_UNKNOWN_CACHE_TTL_HOURS = 6
+IP_LOOKUP_TIMEOUT_SECONDS = 1.8
 # ========================================
 
 def build_access_logs_signature(expire_at):
@@ -145,6 +149,13 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ip_location_cache (
+            ip TEXT PRIMARY KEY,
+            location TEXT NOT NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
     conn.commit()
     
     # Auto fetch if empty
@@ -186,7 +197,7 @@ def log_request_info():
     if request.path.startswith('/static/') or request.path == '/favicon.ico':
         return
     
-    ip = request.remote_addr
+    ip = get_client_ip()
     path = request.path
     method = request.method
     
@@ -235,23 +246,146 @@ def send_wechat_message(content):
     except Exception as e:
         print("微信推送出现异常:", e)
 
-@lru_cache(maxsize=1024)
-def get_ip_location(ip):
-    if not ip or ip.startswith('127.') or ip.startswith('192.168.') or ip.startswith('10.'):
-        return '本地网络'
+def normalize_ip(raw_ip):
+    candidate = str(raw_ip or '').strip()
+    if not candidate:
+        return ''
+
+    if ',' in candidate:
+        candidate = candidate.split(',', 1)[0].strip()
+
+    if candidate.startswith('[') and candidate.endswith(']'):
+        candidate = candidate[1:-1].strip()
+
+    if candidate.count(':') == 1 and '.' in candidate:
+        host, port = candidate.rsplit(':', 1)
+        if port.isdigit():
+            candidate = host.strip()
+
     try:
-        url = f"http://ip-api.com/json/{ip}?lang=zh-CN"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            if data.get('status') == 'success':
-                region = data.get('regionName', '')
-                city = data.get('city', '')
-                loc = f"{region} {city}".strip()
-                return loc if loc else data.get('country', '未知')
-    except Exception:
-        pass
+        ip_obj = ipaddress.ip_address(candidate)
+        if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped:
+            ip_obj = ip_obj.ipv4_mapped
+        return ip_obj.compressed
+    except ValueError:
+        return ''
+
+def get_client_ip():
+    return normalize_ip(request.remote_addr) or ''
+
+def get_local_ip_label(ip_obj):
+    if ip_obj.is_loopback:
+        return '本机/回环'
+    if ip_obj.is_private:
+        return '内网地址'
+    if ip_obj.is_link_local:
+        return '链路本地'
+    if ip_obj.is_reserved:
+        return '保留地址'
+    if ip_obj.is_multicast:
+        return '组播地址'
+    if ip_obj.is_unspecified:
+        return '未指定地址'
+    return ''
+
+def format_location_parts(*parts):
+    normalized_parts = []
+    for raw_part in parts:
+        part = str(raw_part or '').strip()
+        if not part:
+            continue
+        if normalized_parts and normalized_parts[-1] == part:
+            continue
+        normalized_parts.append(part)
+    return ' '.join(normalized_parts)
+
+def load_cached_ip_location(ip):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        'SELECT location, updated_at FROM ip_location_cache WHERE ip = ?',
+        (ip,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+
+    try:
+        updated_at = datetime.strptime(row['updated_at'], '%Y-%m-%d %H:%M:%S')
+    except (TypeError, ValueError):
+        return None
+
+    ttl_hours = IP_LOCATION_UNKNOWN_CACHE_TTL_HOURS if row['location'] == '未知' else IP_LOCATION_CACHE_TTL_HOURS
+    age_seconds = (datetime.utcnow() - updated_at).total_seconds()
+    if age_seconds <= ttl_hours * 3600:
+        return row['location']
+    return None
+
+def save_cached_ip_location(ip, location):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        INSERT INTO ip_location_cache (ip, location, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(ip) DO UPDATE SET
+            location = excluded.location,
+            updated_at = excluded.updated_at
+        ''',
+        (ip, location)
+    )
+    conn.commit()
+    conn.close()
+
+def lookup_ip_location(ip):
+    providers = (
+        (
+            f'https://ipwho.is/{quote(ip)}?lang=zh',
+            lambda data: data.get('success') is True,
+            lambda data: format_location_parts(data.get('country'), data.get('region'), data.get('city'))
+        ),
+        (
+            f'http://ip-api.com/json/{quote(ip)}?lang=zh-CN',
+            lambda data: data.get('status') == 'success',
+            lambda data: format_location_parts(data.get('country'), data.get('regionName'), data.get('city'))
+        ),
+    )
+
+    for url, is_success, build_location in providers:
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=IP_LOOKUP_TIMEOUT_SECONDS) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+            if is_success(data):
+                location = build_location(data)
+                if location:
+                    return location
+        except Exception:
+            continue
     return '未知'
+
+def get_ip_location(ip):
+    normalized_ip = normalize_ip(ip)
+    if not normalized_ip:
+        return '未知'
+
+    try:
+        ip_obj = ipaddress.ip_address(normalized_ip)
+    except ValueError:
+        return '未知'
+
+    local_label = get_local_ip_label(ip_obj)
+    if local_label:
+        return local_label
+
+    cached_location = load_cached_ip_location(normalized_ip)
+    if cached_location:
+        return cached_location
+
+    location = lookup_ip_location(normalized_ip)
+    save_cached_ip_location(normalized_ip, location)
+    return location
 
 def wechat_push_worker():
     while True:
@@ -274,12 +408,15 @@ def wechat_push_worker():
             if rows:
                 title = f"【cwh868】新访问记录 (共 {len(rows)} 条)"
                 description = f"<div class=\"gray\">最近 {interval} 分钟内的访问：</div>"
+                ip_locations = {}
                 for row in rows[:20]:
                     # 截取路径，并仅显示时间部分(HH:MM:SS)
                     time_str = str(row['local_time']).split(' ')[1] if ' ' in str(row['local_time']) else row['local_time']
                     path_str = row['path'] if len(row['path']) < 40 else row['path'][:37] + '...'
                     ip_addr = row['ip']
-                    ip_loc = get_ip_location(ip_addr)
+                    if ip_addr not in ip_locations:
+                        ip_locations[ip_addr] = get_ip_location(ip_addr)
+                    ip_loc = ip_locations[ip_addr]
                     description += f"<div class=\"normal\">{time_str} {ip_addr}({ip_loc}) {row['method']} {path_str}</div>"
                 
                 if len(rows) > 20:
@@ -503,7 +640,7 @@ def access_logs_page():
 
     cursor.execute(
         '''
-        SELECT ip, path, method, datetime(created_at, 'localtime') AS local_time
+        SELECT ip, path, method, strftime('%m-%d %H:%M:%S', created_at, 'localtime') AS local_time
         FROM access_log
         ORDER BY created_at DESC
         LIMIT ?
@@ -511,6 +648,13 @@ def access_logs_page():
         (ACCESS_LOG_PAGE_LIMIT,)
     )
     rows = cursor.fetchall()
+    logs = [dict(row) for row in rows]
+    ip_locations = {}
+    for item in logs:
+        ip_addr = item.get('ip')
+        if ip_addr not in ip_locations:
+            ip_locations[ip_addr] = get_ip_location(ip_addr)
+        item['location'] = ip_locations[ip_addr]
 
     cursor.execute(
         '''
@@ -537,7 +681,7 @@ def access_logs_page():
     expire_at = datetime.fromtimestamp(int(expire_at_raw)).strftime('%Y-%m-%d %H:%M:%S')
     response = make_response(render_template(
         'access_logs.html',
-        logs=rows,
+        logs=logs,
         expires_at=expire_at,
         log_limit=ACCESS_LOG_PAGE_LIMIT,
         total_24h=stats_24h['count'] if stats_24h else 0,
