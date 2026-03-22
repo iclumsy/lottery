@@ -126,15 +126,15 @@ body {
 }
 
 .banner-title {
-    font-size: 1rem;
-    color: #4b5563;
-    font-weight: 700;
+    font-size: 0.82rem;
+    color: #6b7280;
+    font-weight: 600;
 }
 
 .banner-date {
-    font-size: 1.2rem;
+    font-size: 0.95rem;
     color: #1f4bb0;
-    font-weight: 800;
+    font-weight: 700;
     font-family: var(--mono);
 }
 
@@ -202,6 +202,12 @@ body {
     text-align: center;
     text-align-last: center;
     transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.select-small {
+    width: 70px;
+    height: 36px;
+    font-size: 0.88rem;
 }
 
 .limit-input:focus {
@@ -382,18 +388,18 @@ body {
 
 .data-display::-webkit-scrollbar {
     -webkit-appearance: none;
-    width: 40px;
+    width: 8px;
 }
 
 .data-display::-webkit-scrollbar-track {
-    background: rgba(154, 185, 232, 0.28);
-    border-radius: 20px;
+    background: rgba(154, 185, 232, 0.18);
+    border-radius: 8px;
 }
 
 .data-display::-webkit-scrollbar-thumb {
     background: #6e99dd;
-    border-radius: 20px;
-    border: 9px solid rgba(255, 255, 255, 0.24);
+    border-radius: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.4);
     background-clip: padding-box;
 }
 
@@ -1048,18 +1054,18 @@ body {
 
 .error-grid::-webkit-scrollbar {
     -webkit-appearance: none;
-    width: 40px;
+    width: 8px;
 }
 
 .error-grid::-webkit-scrollbar-track {
-    background: rgba(154, 185, 232, 0.28);
-    border-radius: 20px;
+    background: rgba(154, 185, 232, 0.18);
+    border-radius: 8px;
 }
 
 .error-grid::-webkit-scrollbar-thumb {
     background: #6e99dd;
-    border-radius: 20px;
-    border: 9px solid rgba(255, 255, 255, 0.24);
+    border-radius: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.4);
     background-clip: padding-box;
 }
 
@@ -1107,10 +1113,10 @@ body.matrix-open {
 }
 
 .matrix-shell {
-    --matrix-topbar-control-height: 28px;
-    --matrix-topbar-control-padding-x: 12px;
-    --matrix-topbar-control-font-size: 0.78rem;
-    --matrix-topbar-control-min-width: 82px;
+    --matrix-topbar-control-height: 22px;
+    --matrix-topbar-control-padding-x: 8px;
+    --matrix-topbar-control-font-size: 0.74rem;
+    --matrix-topbar-control-min-width: 68px;
     height: calc(var(--matrix-viewport-height) - (var(--matrix-overlay-pad) * 2));
     max-height: calc(var(--matrix-viewport-height) - (var(--matrix-overlay-pad) * 2));
     background: rgba(245, 250, 255, 0.98);
@@ -1119,9 +1125,9 @@ body.matrix-open {
     box-shadow: 0 24px 48px rgba(9, 36, 82, 0.34);
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
     overflow: hidden;
-    padding: 10px;
+    padding: 7px;
 }
 
 .matrix-overlay:fullscreen .matrix-shell {
@@ -1136,9 +1142,9 @@ body.matrix-open {
     flex-direction: row;
     align-items: center;
     flex-wrap: nowrap;
-    gap: 8px;
+    gap: 5px;
     min-width: 0;
-    padding: 2px 2px 6px;
+    padding: 0 1px 4px;
     border-bottom: 1px solid rgba(114, 145, 195, 0.32);
     overflow: visible;
 }
@@ -1286,8 +1292,8 @@ body.matrix-open {
     border: 1px solid rgba(58, 104, 190, 0.35);
     background: rgba(255, 255, 255, 0.9);
     color: #1848b4;
-    border-radius: 10px;
-    padding: 8px 14px;
+    border-radius: 8px;
+    padding: 4px 10px;
     font-weight: 700;
     cursor: pointer;
     flex: 0 0 auto;
@@ -1316,9 +1322,9 @@ body.matrix-open {
     background: rgba(255, 255, 255, 0.88);
     color: #1f4bb0;
     border-radius: 999px;
-    padding: 7px 10px;
+    padding: 3px 8px;
     font-weight: 700;
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     cursor: pointer;
 }
 
@@ -2048,10 +2054,10 @@ body.matrix-open {
     }
 
     .matrix-shell {
-        --matrix-topbar-control-height: 32px;
-        --matrix-topbar-control-padding-x: 10px;
-        --matrix-topbar-control-font-size: 0.76rem;
-        --matrix-topbar-control-min-width: 76px;
+        --matrix-topbar-control-height: 24px;
+        --matrix-topbar-control-padding-x: 8px;
+        --matrix-topbar-control-font-size: 0.74rem;
+        --matrix-topbar-control-min-width: 64px;
     }
 
     .container {
@@ -2368,29 +2374,32 @@ body.matrix-open {
     }
 
     .upload-controls-row {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 10px;
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
     }
 
     .limit-setting-group,
     .action-buttons-group {
-        width: 100%;
+        width: auto;
     }
 
     .limit-setting-group {
-        justify-content: space-between;
+        justify-content: flex-start;
     }
 
     .action-buttons-group .analyze-btn {
-        width: 100%;
+        width: auto;
+        height: 36px;
+        padding: 0 16px;
+        font-size: 0.84rem;
     }
 
     .period-sum-header {
-        flex-direction: column;
-        align-items: stretch !important;
-        justify-content: flex-start !important;
-        gap: 10px;
+        flex-direction: row;
+        align-items: center;
+        flex-wrap: nowrap;
+        gap: 8px;
     }
 
     .period-sum-title {
@@ -2398,7 +2407,11 @@ body.matrix-open {
     }
 
     .period-sum-header .analyze-btn {
-        width: 100%;
+        flex: 0 0 auto;
+        width: auto;
+        height: 32px;
+        padding: 0 14px;
+        font-size: 0.8rem;
     }
 
     .banner-header {
@@ -2407,7 +2420,7 @@ body.matrix-open {
     }
 
     .banner-date {
-        font-size: 1.05rem;
+        font-size: 0.92rem;
     }
 
     .banner-numbers {
@@ -2422,7 +2435,8 @@ body.matrix-open {
     }
 
     .sum-btn {
-        min-height: 42px;
+        min-height: 36px;
+        padding: 6px 2px;
     }
 
     .matrix-overlay {
@@ -2717,6 +2731,7 @@ body.matrix-open {
 
     .sum-btn {
         font-size: 0.76rem;
+        min-height: 34px;
     }
 
     .digit-badge {
@@ -2791,9 +2806,9 @@ body.matrix-open {
     }
 
     .matrix-pos-btn {
-        min-width: 44px;
+        min-width: 40px;
         font-size: 0.72rem;
-        padding: 5px 7px;
+        padding: 4px 5px;
     }
 
     .matrix-shell.show-match-panel .matrix-content {
@@ -2830,7 +2845,7 @@ body.matrix-open {
 
 @media (pointer: coarse) and (min-width: 641px) {
     .matrix-shell {
-        --matrix-topbar-control-height: 36px;
+        --matrix-topbar-control-height: 28px;
     }
 
     .matrix-pos-btn,
@@ -2838,12 +2853,12 @@ body.matrix-open {
     .matrix-search-input,
     .matrix-search-btn,
     .matrix-search-clear-btn {
-        min-height: 36px;
+        min-height: 28px;
     }
 
     .matrix-pos-btn {
-        padding-top: 8px;
-        padding-bottom: 8px;
+        padding-top: 4px;
+        padding-bottom: 4px;
     }
 }
 
