@@ -815,22 +815,9 @@ def upsert_dadi_base(slot):
         name = default_name
         numbers_input = ''
 
-        payload = request.get_json(silent=True)
-        if payload is not None:
-            name = str(payload.get('name') or default_name).strip() or default_name
-            numbers_input = payload.get('numbers', '')
-        elif 'file' in request.files:
-            file = request.files['file']
-            if not file or file.filename == '':
-                return jsonify({'error': '未选择文件'}), 400
-            try:
-                numbers_input = file.read().decode('utf-8')
-            except Exception:
-                return jsonify({'error': '文件读取失败，请确保上传的是文本文件'}), 400
-            name = (request.form.get('name') or default_name).strip() or default_name
-        else:
-            name = (request.form.get('name') or default_name).strip() or default_name
-            numbers_input = request.form.get('numbers', '')
+        payload = request.get_json(silent=True) or {}
+        name = str(payload.get('name') or request.form.get('name') or default_name).strip() or default_name
+        numbers_input = payload.get('numbers') or request.form.get('numbers') or ''
 
         numbers, invalid = normalize_dadi_numbers(numbers_input)
         if invalid:
@@ -861,27 +848,24 @@ def upsert_dadi_base(slot):
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
-    if 'file' not in request.files:
-        return jsonify({'error': '未找到上传的文件'}), 400
-    
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': '未选择文件'}), 400
-        
+    req_data = request.get_json(silent=True) or {}
+    lines = req_data.get('lines', [])
     try:
-        content = file.read().decode('utf-8')
-    except Exception as e:
-        return jsonify({'error': '文件读取失败，请确保上传的是文本文件'}), 400
+        period_sum = int(req_data.get('period_sum', 1))
+    except (TypeError, ValueError):
+        period_sum = 1
 
-    period_sum = request.form.get('period_sum', 1, type=int)
     if period_sum < 1 or period_sum > 20:
         period_sum = 1
 
-    # 处理内容、过滤空白行
-    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    if not lines:
+        return jsonify({'error': '请输入数据进行分析（数据为空）。'}), 400
+    
+    # 清理行内的空白
+    lines = [str(line).strip() for line in lines if str(line).strip()]
     
     if len(lines) == 0:
-        return jsonify({'error': '请输入数据进行分析（文件为空）。'}), 400
+        return jsonify({'error': '请输入数据进行分析（无有效数据）。'}), 400
         
     # 获取基准位数 L
     L = len(lines[0])
@@ -938,7 +922,37 @@ def analyze():
         gap_results.append({
             'position': pos + 1,
             'maxGap': max_gap,
-            'candidates': candidates
+            'candidates': candidates,
+            'is3Pos': False
+        })
+
+    # 3 位遗漏统计
+    if L >= 3:
+        last_appeared_3pos = [-1] * 10
+        for i, digits in enumerate(parsed):
+            row_num = i + 1
+            for pos in range(3):
+                last_appeared_3pos[digits[pos]] = row_num
+                
+        max_gap_3pos = -1
+        candidates_3pos = []
+        all_gaps_3pos = {}
+        for digit in range(10):
+            R = last_appeared_3pos[digit]
+            gap = n if R == -1 else n - R
+            all_gaps_3pos[digit] = gap
+            if gap > max_gap_3pos:
+                max_gap_3pos = gap
+                candidates_3pos = [digit]
+            elif gap == max_gap_3pos:
+                candidates_3pos.append(digit)
+                
+        gap_results.append({
+            'position': '前三',
+            'maxGap': max_gap_3pos,
+            'candidates': candidates_3pos,
+            'is3Pos': True,
+            'allGaps': all_gaps_3pos
         })
 
     # 仅保留遗漏统计、大底生成和容错分析

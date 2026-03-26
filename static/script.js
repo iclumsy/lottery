@@ -737,12 +737,15 @@ document.addEventListener('DOMContentLoaded', () => {
         clearError();
 
         try {
-            const textContent = activeLines.join('\n');
-            const blob = new Blob([textContent], { type: 'text/plain' });
-            const fd = new FormData();
-            fd.append('file', blob, 'net_data.txt');
-            fd.append('period_sum', currentPeriodSum);
-            const res = await fetch('/api/analyze', { method: 'POST', body: fd });
+            const reqData = {
+                lines: activeLines,
+                period_sum: currentPeriodSum
+            };
+            const res = await fetch('/api/analyze', { 
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(reqData)
+            });
 
             const data = await res.json();
             if (!res.ok) { showError(data.error || '解析失败'); return; }
@@ -825,30 +828,56 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!results) return wrap;
 
         results.forEach(r => {
-            const isTargetPos = r.position >= 1 && r.position <= 3;
+            const isTargetPos = r.position === '前三' || r.is3Pos || (r.position >= 1 && r.position <= 3);
             const isLargeGap = r.maxGap > 40;
             const shouldHighlight = isTargetPos && isLargeGap;
 
             const card = document.createElement('div');
-            card.className = `stat-card gap-card ${shouldHighlight ? 'danger-card' : ''}`;
+            card.className = `stat-card gap-card ${shouldHighlight ? 'danger-card' : ''} ${r.is3Pos ? 'gap-card-3pos' : ''}`;
 
-            const badgeHtml = r.candidates.sort((a, b) => a - b).map(d => {
-                let html = `<span class="digit-badge ${shouldHighlight ? 'danger-badge' : ''}">${d}</span>`;
-                if (periodSum > 1 && offsets && offsets[r.position - 1] !== undefined) {
-                    const offset = offsets[r.position - 1];
-                    const realDigit = (d - offset + 10) % 10;
-                    html += '<span class="digit-arrow">→</span>';
-                    html += `<span class="digit-badge offset-badge ${shouldHighlight ? 'danger-badge' : ''}">${realDigit}</span>`;
+            let badgeHtml = '';
+            if (r.is3Pos && r.allGaps) {
+                const items = [];
+                for (let i = 0; i < 10; i++) {
+                    const gap = r.allGaps[i];
+                    const isMax = gap === r.maxGap;
+                    const isDanger = isMax || gap > 40;
+                    items.push(`
+                        <div class="digit-gap-item" title="数字 ${i} 遗漏 ${gap} 期">
+                            <span class="digit-badge ${isDanger ? 'danger-badge' : ''}">${i}</span>
+                            <span class="gap-value ${isDanger ? 'danger-text' : ''}">${gap}</span>
+                        </div>
+                    `);
                 }
-                return `<div class="digit-pair">${html}</div>`;
-            }).join('');
+                badgeHtml = items.join('');
+            } else {
+                badgeHtml = r.candidates.sort((a, b) => a - b).map(d => {
+                    let html = `<span class="digit-badge ${shouldHighlight ? 'danger-badge' : ''}">${d}</span>`;
+                    if (periodSum > 1 && offsets && !r.is3Pos && offsets[r.position - 1] !== undefined) {
+                        const offset = offsets[r.position - 1];
+                        const realDigit = (d - offset + 10) % 10;
+                        html += '<span class="digit-arrow">→</span>';
+                        html += `<span class="digit-badge offset-badge ${shouldHighlight ? 'danger-badge' : ''}">${realDigit}</span>`;
+                    }
+                    return `<div class="digit-pair">${html}</div>`;
+                }).join('');
+            }
 
-            card.innerHTML = `
-                <div class="gap-head">
-                    <div class="gap-bg-index ${shouldHighlight ? 'danger-text' : ''}">${r.position}</div>
-                    <div class="stat-gap gap-head-gap">遗漏 <strong class="${shouldHighlight ? 'danger-text' : ''}">${r.maxGap}</strong> 期</div>
-                </div>
-                <div class="stat-digits gap-digits">${badgeHtml}</div>`;
+            if (r.is3Pos) {
+                card.innerHTML = `
+                    <div class="gap-title-3pos">
+                        <div class="gap-label-3pos">前三位综合遗漏</div>
+                        <div class="stat-gap">最大遗漏 <strong class="${shouldHighlight ? 'danger-text' : ''}">${r.maxGap}</strong> 期</div>
+                    </div>
+                    <div class="stat-digits gap-digits-3pos">${badgeHtml}</div>`;
+            } else {
+                card.innerHTML = `
+                    <div class="gap-head">
+                        <div class="gap-bg-index ${shouldHighlight ? 'danger-text' : ''}">${r.position}</div>
+                        <div class="stat-gap gap-head-gap">遗漏 <strong class="${shouldHighlight ? 'danger-text' : ''}">${r.maxGap}</strong> 期</div>
+                    </div>
+                    <div class="stat-digits gap-digits">${badgeHtml}</div>`;
+            }
             wrap.appendChild(card);
         });
         return wrap;

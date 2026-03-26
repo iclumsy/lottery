@@ -96,7 +96,7 @@ body {
     min-width: 0;
 }
 
-.upload-card {
+.data-card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -144,7 +144,7 @@ body {
     justify-content: center;
 }
 
-.upload-controls-row {
+.data-controls-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -445,7 +445,7 @@ body {
     width: 26px;
     height: 26px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 50%;
     background: rgba(255, 255, 255, 0.92);
     font-weight: 700;
     font-size: 0.95rem;
@@ -502,7 +502,7 @@ body {
     color: #fff;
     width: 24px;
     height: 24px;
-    border-radius: 6px;
+    border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -611,6 +611,68 @@ body {
     overflow: hidden;
 }
 
+.gap-grid .gap-card-3pos {
+    grid-column: 1 / -1;
+    min-height: auto;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+}
+
+.gap-title-3pos {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin-right: 16px;
+}
+
+.gap-label-3pos {
+    font-size: 1.35rem;
+    font-weight: 800;
+    color: #1a4199;
+    white-space: nowrap;
+}
+
+.gap-title-3pos .stat-gap {
+    font-size: 1.05rem;
+}
+
+.gap-title-3pos .stat-gap strong {
+    font-size: 1.35rem;
+}
+
+.gap-digits-3pos {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    flex: 1;
+}
+
+.digit-gap-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.gap-grid .digit-gap-item .digit-badge {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    font-size: 1.35rem;
+}
+
+.digit-gap-item .gap-value {
+    font-size: 1.05rem;
+    font-family: var(--mono);
+    color: var(--text-secondary);
+    font-weight: 700;
+}
+
 .gap-grid .stat-digits {
     width: 100%;
     justify-content: flex-start;
@@ -621,7 +683,7 @@ body {
 .gap-grid .digit-badge {
     width: 48px;
     height: 48px;
-    border-radius: 12px;
+    border-radius: 50%;
     font-size: 1.8rem;
 }
 
@@ -2366,14 +2428,14 @@ body.matrix-open {
         gap: 10px;
     }
 
-    .upload-card,
+    .data-card,
     .period-sum-section,
     .panel {
         padding-left: 12px;
         padding-right: 12px;
     }
 
-    .upload-controls-row {
+    .data-controls-row {
         flex-direction: row;
         align-items: center;
         gap: 8px;
