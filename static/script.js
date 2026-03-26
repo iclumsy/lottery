@@ -280,7 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const selectedRows = [];
         const selectedLabels = [];
-        for (let idx = safeRows.length - 1; idx >= 0; idx -= step) {
+        for (let idx = safeRows.length - step; idx >= 0; idx -= step) {
             selectedRows.push(safeRows[idx]);
             if (safeLabels.length) {
                 selectedLabels.push(safeLabels[idx]);
