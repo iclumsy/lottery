@@ -68,6 +68,17 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentPeriodSum = 1;
     let currentSourceLines = [];
     let currentSourceExpects = [];
+    let isRetreatMode = false;
+
+    function getEffectiveLines(lines) {
+        if (!lines || lines.length === 0) return lines;
+        return isRetreatMode ? lines.slice(0, -1) : lines;
+    }
+
+    function getEffectiveExpects(expects, lines) {
+        if (!expects || expects.length === 0) return expects;
+        return isRetreatMode ? expects.slice(0, -1) : expects;
+    }
     const matrixState = {
         allRows: [],
         allRowLabels: [],
@@ -333,7 +344,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 // Re-trigger analysis by current DB data
-                if (netLines) doAnalyze(netLines);
+                if (netLines) doAnalyze(getEffectiveLines(netLines));
             });
             periodSumControls.appendChild(btn);
         }
@@ -417,9 +428,11 @@ document.addEventListener('DOMContentLoaded', () => {
             latestOpenNumbers = netLines.length > 0 ? netLines[netLines.length - 1].replace(/,/g, '') : '';
             refreshUpdateButtonText();
 
-            renderPreview(netLines);
-            doAnalyze(netLines);
-            refreshOpenMatrixData(netLines, currentSourceExpects);
+            const effectiveLines = getEffectiveLines(netLines);
+            const effectiveExpects = getEffectiveExpects(currentSourceExpects, netLines);
+            renderPreview(effectiveLines);
+            doAnalyze(effectiveLines);
+            refreshOpenMatrixData(effectiveLines, effectiveExpects);
         } catch (err) {
             showError('服务器未响应，请检查后端运行状态');
         }
@@ -726,6 +739,20 @@ document.addEventListener('DOMContentLoaded', () => {
             } finally {
                 fetchNetBtn.disabled = false;
                 refreshUpdateButtonText();
+            }
+        });
+    }
+
+    const retreatToggle = document.getElementById('retreatToggle');
+    if (retreatToggle) {
+        retreatToggle.addEventListener('change', () => {
+            isRetreatMode = retreatToggle.checked;
+            if (netLines) {
+                const effectiveLines = getEffectiveLines(netLines);
+                const effectiveExpects = getEffectiveExpects(currentSourceExpects, netLines);
+                renderPreview(effectiveLines);
+                doAnalyze(effectiveLines);
+                refreshOpenMatrixData(effectiveLines, effectiveExpects);
             }
         });
     }
@@ -1355,7 +1382,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function normalizeSourceRows() {
-        const rows = (currentSourceLines || [])
+        const rows = getEffectiveLines(currentSourceLines || [])
             .map(line => String(line || '').trim())
             .filter(Boolean);
         if (!rows.length) {

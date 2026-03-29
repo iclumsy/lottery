@@ -22,8 +22,15 @@
                 <!-- Top Row: Latest Results -->
                 <div id="latestResultBanner" class="latest-result-banner" style="display: none;">
                     <div class="banner-header">
-                        <span class="banner-title">最新开奖</span>
-                        <span id="bannerDate" class="banner-date"></span>
+                        <div class="banner-left">
+                            <span class="banner-title">最新开奖</span>
+                            <span id="bannerDate" class="banner-date"></span>
+                        </div>
+                        <label class="retreat-toggle" title="开启后屏蔽最新一期数据">
+                            <input type="checkbox" id="retreatToggle">
+                            <span class="retreat-slider"></span>
+                            <span class="retreat-label">倒退</span>
+                        </label>
                     </div>
                     <div id="latestNumbersDisplay" class="banner-numbers"></div>
                 </div>
