@@ -570,6 +570,7 @@ def load_dadi_base_sets():
     return base_sets
 
 def compute_dadi_transform(raw_parsed, digit_len, base_sets):
+    """大底转换：原始基底不变，19 组偏移基于当前维度数据，计数在当前空间完成"""
     total_lines = len(raw_parsed)
     transform_bases = []
 
@@ -580,14 +581,14 @@ def compute_dadi_transform(raw_parsed, digit_len, base_sets):
         total_sets = 0
 
         if digit_len >= 3 and numbers:
-            # Set 1: keep original base unchanged.
+            # Set 1: 原始基底不变
             original_set = set(numbers)
             offsets.append({'period': 0, 'offset': [0, 0, 0], 'is_original': True})
             total_sets += 1
             for code in original_set:
                 counts[code] = counts.get(code, 0) + 1
 
-            # Set 2..20: 19 transformed sets by latest 1..19 period sums.
+            # Set 2..20: 19 组偏移基于当前维度数据
             for k in range(1, 20):
                 if total_lines < k:
                     break
@@ -980,8 +981,15 @@ def analyze():
     raw_n = len(raw_parsed)
     raw_parsed_for_danger = raw_parsed
 
+    # 计算 period_sum 的偏移量（用于将 N期和空间 转换回 1期空间）
+    period_sum_offset = [0] * L
+    if period_sum > 1:
+        ps_window = raw_parsed[n_lines - (period_sum - 1):]
+        for pos in range(min(3, L)):
+            period_sum_offset[pos] = sum(row[pos] for row in ps_window) % 10
+
     for k in range(1, 21):
-        # 1. 大底部分 — 基于当前 period_sum 数据
+        # 1. 大底部分 — 基于当前 period_sum 数据（计数在当前空间完成，前端过滤后再转换）
         res_k = compute_dadi(k, base_n, base_data_tuple, L)
         if res_k and 'dadi' in res_k:
             dadi_fault_tolerance['total_sets'] += 1
@@ -1019,7 +1027,7 @@ def analyze():
 
     transformed_data = ["".join(map(str, row)) for row in (parsed if period_sum > 1 else raw_parsed)]
     base_sets = load_dadi_base_sets()
-    # 大底转换也基于当前 period_sum 的数据
+    # 大底转换：原始基底不变，19 组偏移基于变换后数据，计数在当前空间完成
     dadi_transform = compute_dadi_transform(base_data_list, L, base_sets)
 
     return jsonify({
@@ -1033,7 +1041,8 @@ def analyze():
         'dangerPeriods': danger_periods,
         'dangerPeriodGaps': danger_period_gaps,
         'offsets': dadi_results.get('offsets') if dadi_results else None,
-        'periodSum': period_sum
+        'periodSum': period_sum,
+        'periodSumOffset': period_sum_offset if period_sum > 1 else None
     })
 
 @app.route('/api/update_history', methods=['POST', 'GET'])

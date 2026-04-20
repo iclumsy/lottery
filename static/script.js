@@ -836,8 +836,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const tabs = [
             { id: 'gap', label: '遗漏统计', render: () => renderGap(data.gapAnalysis, data.offsets, data.periodSum) },
             { id: 'dadi', label: '大底生成', render: () => renderDadi(data.dadiAnalysis) },
-            { id: 'dadiError', label: '大底容错分析', render: () => renderDadiError(data.dadiFaultTolerance) },
-            { id: 'dadiTransform', label: '大底转换', render: () => renderDadiTransform(data.dadiTransform) },
+            { id: 'dadiError', label: '大底容错分析', render: () => renderDadiError(data.dadiFaultTolerance, data.periodSumOffset) },
+            { id: 'dadiTransform', label: '大底转换', render: () => renderDadiTransform(data.dadiTransform, data.periodSumOffset) },
         ];
 
         const tabBar = document.createElement('div');
@@ -1060,7 +1060,13 @@ document.addEventListener('DOMContentLoaded', () => {
         return wrap;
     }
 
-    function renderDadiError(results) {
+    // 将 period_sum 空间的号码转回 1 期空间
+    function applyPeriodSumOffset(code, offset) {
+        if (!offset || code.length < 3) return code;
+        return code.split('').map((ch, i) => ((parseInt(ch, 10) - (offset[i] || 0)) % 10 + 10) % 10).join('');
+    }
+
+    function renderDadiError(results, periodSumOffset) {
         if (!results || !results.counts) return document.createElement('div');
         const counts = results.counts;
         const totalSets = results.total_sets || 0;
@@ -1156,6 +1162,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
 
+            // 容错过滤完成后，将结果转回 1 期空间
+            if (periodSumOffset) {
+                currentResults = currentResults.map(code => applyPeriodSumOffset(code, periodSumOffset));
+                currentResults = [...new Set(currentResults)].sort();
+            }
+
             errCountLabel.textContent = currentResults.length;
             errResultArea.innerHTML = currentResults.map(num => `<div class="grid-num-item">${num}</div>`).join('');
             
@@ -1228,7 +1240,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return card;
     }
 
-    function renderDadiTransform(results) {
+    function renderDadiTransform(results, periodSumOffset) {
         const wrap = document.createElement('div');
         wrap.className = 'cards-list animate-in';
         const bases = results && Array.isArray(results.bases) ? results.bases : [];
@@ -1354,7 +1366,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     nextResults.push(code);
                 }
             }
-            currentResults = nextResults;
+
+            // 容错过滤完成后，将结果转回 1 期空间
+            if (periodSumOffset) {
+                currentResults = nextResults.map(code => applyPeriodSumOffset(code, periodSumOffset));
+                currentResults = [...new Set(currentResults)].sort();
+            } else {
+                currentResults = nextResults;
+            }
 
             countLabel.innerHTML = `${title} 符合条件的大底号码: <strong>${currentResults.length}</strong> 注`;
             metaLabel.innerHTML = `原始大底 <strong>${sourceCount}</strong> 注；转换大底 <strong>${totalSets}</strong> 组；容错范围 <strong>[${minErr}, ${maxErr}]</strong>`;
