@@ -963,27 +963,35 @@ def analyze():
     dadi_results = compute_dadi(period_sum, n_lines, raw_parsed_tuple, L) or {}
     
     # ═══ 7. 大底容错统计 (DaDi Fault Tolerance) & 全局遗漏预警 ═══
-    # 计算 1 到 20 期的所有各自大底及遗漏预警
+    # 基于当前 period_sum 的数据作为基础数据
+    # 当 period_sum > 1 时，先计算 N 期和数据，再在其上迭代 k=1..20
+    if period_sum > 1:
+        base_data_list = parsed  # 已在上方计算好的 period_sum 求和数据
+    else:
+        base_data_list = raw_parsed
+    base_data_tuple = tuple(tuple(row) for row in base_data_list)
+    base_n = len(base_data_list)
+
     dadi_fault_tolerance = {'total_sets': 0, 'counts': {}}
     danger_periods = []
     danger_period_gaps = {}
     
     for k in range(1, 21):
-        # 1. 大底部分
-        res_k = compute_dadi(k, n_lines, raw_parsed_tuple, L)
+        # 1. 大底部分 — 基于当前 period_sum 数据
+        res_k = compute_dadi(k, base_n, base_data_tuple, L)
         if res_k and 'dadi' in res_k:
             dadi_fault_tolerance['total_sets'] += 1
             for num in res_k['dadi']:
                 dadi_fault_tolerance['counts'][num] = dadi_fault_tolerance['counts'].get(num, 0) + 1
             
-            # 2. 检查遗漏预警
+            # 2. 检查遗漏预警 — 同样基于 period_sum 数据
             pk = []
             if k > 1:
-                for i in range(len(raw_parsed) - k + 1):
-                    window = raw_parsed[i:i + k]
+                for i in range(len(base_data_list) - k + 1):
+                    window = base_data_list[i:i + k]
                     pk.append([sum(row[p] for row in window) % 10 for p in range(L)])
             else:
-                pk = raw_parsed
+                pk = base_data_list
 
             nk = len(pk)
             max_gap_for_k = 0
@@ -1007,7 +1015,8 @@ def analyze():
 
     transformed_data = ["".join(map(str, row)) for row in (parsed if period_sum > 1 else raw_parsed)]
     base_sets = load_dadi_base_sets()
-    dadi_transform = compute_dadi_transform(raw_parsed, L, base_sets)
+    # 大底转换也基于当前 period_sum 的数据
+    dadi_transform = compute_dadi_transform(base_data_list, L, base_sets)
 
     return jsonify({
         'totalFiles': 1,

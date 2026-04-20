@@ -90,6 +90,53 @@
         </div>
     </main>
 
+    <!-- 右侧悬浮备选面板 -->
+    <div id="candidatePanel" class="candidate-panel collapsed">
+        <button id="candidateToggleTab" class="candidate-toggle-tab" type="button">
+            <span class="candidate-toggle-icon">📋</span>
+            <span id="candidateBadge" class="candidate-badge" style="display:none;">0</span>
+        </button>
+        <div class="candidate-panel-inner">
+            <div class="candidate-panel-header">
+                <h3>备选池</h3>
+                <button id="candidateClearAllBtn" class="candidate-clear-btn" type="button">清空全部</button>
+            </div>
+            <div id="candidateList" class="candidate-list">
+                <p class="empty-hint">暂无备选项</p>
+            </div>
+            <div class="candidate-actions">
+                <button id="candidateIntersectBtn" class="candidate-intersect-btn" type="button" disabled>求交集</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 交集结果弹窗 -->
+    <div id="intersectionModal" class="intersection-modal" style="display:none;">
+        <div class="intersection-backdrop"></div>
+        <div class="intersection-dialog">
+            <div class="intersection-dialog-header">
+                <h3>交集结果</h3>
+                <button id="intersectionCloseBtn" class="intersection-close-btn" type="button">✕</button>
+            </div>
+            <div class="intersection-dialog-body">
+                <div class="intersection-info">
+                    <span>交集号码: <strong id="intersectionCountLabel">0</strong> 注</span>
+                </div>
+                <div class="result-action-group" style="margin-bottom:12px;">
+                    <button id="intersectionCopyBtn" class="copy-btn-mini">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"></path></svg>
+                        一键复制结果
+                    </button>
+                    <button id="intersectionDownloadBtn" class="copy-btn-mini download-btn-mini">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v12m0 0l4-4m-4 4l-4-4M5 21h14"></path></svg>
+                        下载TXT
+                    </button>
+                </div>
+                <div id="intersectionResultArea" class="error-grid"></div>
+            </div>
+        </div>
+    </div>
+
     <div id="matrixOverlay" class="matrix-overlay" aria-hidden="true">
         <section class="matrix-shell" role="dialog" aria-modal="true" aria-label="开奖号码全屏矩阵">
             <header class="matrix-topbar">

@@ -718,6 +718,8 @@ document.addEventListener('DOMContentLoaded', () => {
             row.appendChild(content);
             inputDisplay.appendChild(row);
         });
+        // 自动滚动到最底部
+        inputDisplay.scrollTop = inputDisplay.scrollHeight;
     }
 
     // ── Fetch Network Data ──
@@ -985,6 +987,17 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
         card.innerHTML = rulesHtml;
 
+        // 添加到备选按钮
+        const addCandidateBtnContainer = card.querySelector('#copyDadiBtn')?.closest('.result-action-group');
+        if (addCandidateBtnContainer) {
+            const periodLabel = currentPeriodSum === 1 ? '1期' : `${currentPeriodSum}期和`;
+            const addBtn = createAddCandidateButton(
+                () => `大底生成 (${periodLabel})`,
+                () => results.dadi
+            );
+            addCandidateBtnContainer.appendChild(addBtn);
+        }
+
         const copyBtn = card.querySelector('#copyDadiBtn');
         const downloadBtn = card.querySelector('#downloadDadiBtn');
         if (copyBtn) {
@@ -1124,6 +1137,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
         applyBtn.addEventListener('click', updateResults);
         updateResults();
+
+        // 添加到备选按钮
+        const addCandidateBtnContainer = card.querySelector('#copyErrBtn')?.closest('.result-action-group');
+        if (addCandidateBtnContainer) {
+            const periodLabel = currentPeriodSum === 1 ? '1期' : `${currentPeriodSum}期和`;
+            const addBtn = createAddCandidateButton(
+                () => {
+                    const minVal = errMinInput.value;
+                    const maxVal = errMaxInput.value;
+                    return `容错分析 (${periodLabel}) [${minVal},${maxVal}]`;
+                },
+                () => [...currentResults]
+            );
+            addCandidateBtnContainer.appendChild(addBtn);
+        }
 
         if (copyBtn) {
             copyBtn.addEventListener('click', async () => {
@@ -1319,6 +1347,21 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         applyBtn.addEventListener('click', updateTransformResults);
+
+        // 添加到备选按钮
+        const addCandidateBtnContainer = card.querySelector('#copyTransformBtn')?.closest('.result-action-group');
+        if (addCandidateBtnContainer) {
+            const periodLabel = currentPeriodSum === 1 ? '1期' : `${currentPeriodSum}期和`;
+            const addBtn = createAddCandidateButton(
+                () => {
+                    const activeBase = baseMap.get(activeSlot);
+                    const baseName = activeBase && activeBase.name ? activeBase.name : `大底${activeSlot}`;
+                    return `大底转换 ${baseName} (${periodLabel})`;
+                },
+                () => [...currentResults]
+            );
+            addCandidateBtnContainer.appendChild(addBtn);
+        }
 
         copyBtn.addEventListener('click', async () => {
             if (!currentResults.length) return;
@@ -2401,6 +2444,238 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Download txt failed:', err);
             return false;
         }
+    }
+
+    // ═══ 备选池管理 (Candidate Pool) ═══
+    const candidatePanel = document.getElementById('candidatePanel');
+    const candidateToggleTab = document.getElementById('candidateToggleTab');
+    const candidateBadge = document.getElementById('candidateBadge');
+    const candidateListEl = document.getElementById('candidateList');
+    const candidateClearAllBtn = document.getElementById('candidateClearAllBtn');
+    const candidateIntersectBtn = document.getElementById('candidateIntersectBtn');
+    const intersectionModal = document.getElementById('intersectionModal');
+    const intersectionCloseBtn = document.getElementById('intersectionCloseBtn');
+    const intersectionCopyBtn = document.getElementById('intersectionCopyBtn');
+    const intersectionDownloadBtn = document.getElementById('intersectionDownloadBtn');
+    const intersectionCountLabel = document.getElementById('intersectionCountLabel');
+    const intersectionResultArea = document.getElementById('intersectionResultArea');
+
+    let candidatePool = [];
+    let candidateIdCounter = 0;
+    let lastIntersectionResults = [];
+
+    function addCandidate(label, numbers) {
+        if (!numbers || !numbers.length) return;
+        candidateIdCounter++;
+        candidatePool.push({
+            id: candidateIdCounter,
+            label: label,
+            numbers: [...numbers]
+        });
+        renderCandidatePanel();
+        // 自动展开面板
+        if (candidatePanel && candidatePanel.classList.contains('collapsed')) {
+            candidatePanel.classList.remove('collapsed');
+        }
+    }
+
+    function removeCandidate(id) {
+        candidatePool = candidatePool.filter(c => c.id !== id);
+        renderCandidatePanel();
+    }
+
+    function clearAllCandidates() {
+        candidatePool = [];
+        renderCandidatePanel();
+    }
+
+    function computeIntersection() {
+        if (candidatePool.length === 0) return [];
+        if (candidatePool.length === 1) return [...candidatePool[0].numbers];
+
+        // 以第一个备选的号码集合为初始值，逐步与后续备选取交集
+        let result = new Set(candidatePool[0].numbers);
+        for (let i = 1; i < candidatePool.length; i++) {
+            const nextSet = new Set(candidatePool[i].numbers);
+            result = new Set([...result].filter(num => nextSet.has(num)));
+        }
+        return [...result].sort();
+    }
+
+    function renderCandidatePanel() {
+        if (!candidateListEl) return;
+
+        // 更新角标
+        if (candidateBadge) {
+            if (candidatePool.length > 0) {
+                candidateBadge.textContent = candidatePool.length;
+                candidateBadge.style.display = 'flex';
+            } else {
+                candidateBadge.style.display = 'none';
+            }
+        }
+
+        // 更新列表
+        if (candidatePool.length === 0) {
+            candidateListEl.innerHTML = '<p class="empty-hint">暂无备选项</p>';
+        } else {
+            candidateListEl.innerHTML = candidatePool.map(c => `
+                <div class="candidate-item" data-id="${c.id}">
+                    <div class="candidate-item-info">
+                        <span class="candidate-item-label" title="${c.label}">${c.label}</span>
+                        <span class="candidate-item-count">${c.numbers.length} 注</span>
+                    </div>
+                    <button class="candidate-remove-btn" data-id="${c.id}" type="button" title="移除">✕</button>
+                </div>
+            `).join('');
+
+            // 绑定移除按钮事件
+            candidateListEl.querySelectorAll('.candidate-remove-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const id = parseInt(btn.dataset.id, 10);
+                    if (Number.isInteger(id)) removeCandidate(id);
+                });
+            });
+        }
+
+        // 更新求交集按钮状态
+        if (candidateIntersectBtn) {
+            candidateIntersectBtn.disabled = candidatePool.length < 2;
+            candidateIntersectBtn.textContent = candidatePool.length < 2
+                ? '求交集（至少选2项）'
+                : `求交集（${candidatePool.length} 项）`;
+        }
+    }
+
+    function showIntersectionModal(results) {
+        lastIntersectionResults = results;
+        if (!intersectionModal) return;
+
+        if (intersectionCountLabel) {
+            intersectionCountLabel.textContent = results.length;
+        }
+        if (intersectionResultArea) {
+            if (results.length > 0) {
+                intersectionResultArea.innerHTML = results.map(num =>
+                    `<div class="grid-num-item">${num}</div>`
+                ).join('');
+            } else {
+                intersectionResultArea.innerHTML = '<p class="empty-hint">无交集结果</p>';
+            }
+        }
+        intersectionModal.style.display = 'flex';
+    }
+
+    function hideIntersectionModal() {
+        if (intersectionModal) intersectionModal.style.display = 'none';
+        lastIntersectionResults = [];
+    }
+
+    // 绑定面板事件
+    if (candidateToggleTab) {
+        candidateToggleTab.addEventListener('click', () => {
+            if (candidatePanel) candidatePanel.classList.toggle('collapsed');
+        });
+    }
+
+    if (candidateClearAllBtn) {
+        candidateClearAllBtn.addEventListener('click', clearAllCandidates);
+    }
+
+    if (candidateIntersectBtn) {
+        candidateIntersectBtn.addEventListener('click', () => {
+            const results = computeIntersection();
+            showIntersectionModal(results);
+        });
+    }
+
+    if (intersectionCloseBtn) {
+        intersectionCloseBtn.addEventListener('click', hideIntersectionModal);
+    }
+
+    if (intersectionModal) {
+        const backdrop = intersectionModal.querySelector('.intersection-backdrop');
+        if (backdrop) {
+            backdrop.addEventListener('click', hideIntersectionModal);
+        }
+    }
+
+    if (intersectionCopyBtn) {
+        intersectionCopyBtn.addEventListener('click', async () => {
+            if (!lastIntersectionResults.length) return;
+            const success = await copyToClipboard(lastIntersectionResults.join('\n'));
+            if (success) {
+                const old = intersectionCopyBtn.innerHTML;
+                intersectionCopyBtn.innerHTML = `
+                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"></path></svg>
+                    已成功复制！
+                `;
+                intersectionCopyBtn.style.background = '#10b981';
+                setTimeout(() => {
+                    intersectionCopyBtn.innerHTML = old;
+                    intersectionCopyBtn.style.background = '';
+                }, 1500);
+            } else {
+                alert('复制失败，请手动选择复制');
+            }
+        });
+    }
+
+    if (intersectionDownloadBtn) {
+        intersectionDownloadBtn.addEventListener('click', () => {
+            if (!lastIntersectionResults.length) return;
+            const success = downloadTextAsFile(lastIntersectionResults, '交集结果');
+            if (success) {
+                const old = intersectionDownloadBtn.innerHTML;
+                intersectionDownloadBtn.innerHTML = `
+                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"></path></svg>
+                    已下载TXT
+                `;
+                intersectionDownloadBtn.style.background = '#0f766e';
+                setTimeout(() => {
+                    intersectionDownloadBtn.innerHTML = old;
+                    intersectionDownloadBtn.style.background = '';
+                }, 1500);
+            } else {
+                alert('下载失败，请重试');
+            }
+        });
+    }
+
+    // 初始化面板
+    renderCandidatePanel();
+
+    // 创建添加到备选按钮的通用工厂函数
+    function createAddCandidateButton(getLabel, getNumbers) {
+        const btn = document.createElement('button');
+        btn.className = 'add-candidate-btn';
+        btn.innerHTML = `
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"></path></svg>
+            添加到备选
+        `;
+        btn.addEventListener('click', () => {
+            const label = getLabel();
+            const numbers = getNumbers();
+            if (!numbers || !numbers.length) {
+                alert('当前无结果可添加');
+                return;
+            }
+            addCandidate(label, numbers);
+            // 按钮反馈
+            btn.classList.add('added');
+            btn.innerHTML = `
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"></path></svg>
+                已添加
+            `;
+            setTimeout(() => {
+                btn.classList.remove('added');
+                btn.innerHTML = `
+                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"></path></svg>
+                    添加到备选
+                `;
+            }, 1500);
+        });
+        return btn;
     }
 
 });
