@@ -976,6 +976,10 @@ def analyze():
     danger_periods = []
     danger_period_gaps = {}
     
+    # 遗漏预警始终基于原始 1 期数据，不受 period_sum 影响
+    raw_n = len(raw_parsed)
+    raw_parsed_for_danger = raw_parsed
+
     for k in range(1, 21):
         # 1. 大底部分 — 基于当前 period_sum 数据
         res_k = compute_dadi(k, base_n, base_data_tuple, L)
@@ -984,14 +988,14 @@ def analyze():
             for num in res_k['dadi']:
                 dadi_fault_tolerance['counts'][num] = dadi_fault_tolerance['counts'].get(num, 0) + 1
             
-            # 2. 检查遗漏预警 — 同样基于 period_sum 数据
+            # 2. 检查遗漏预警 — 始终基于原始 raw_parsed 数据
             pk = []
             if k > 1:
-                for i in range(len(base_data_list) - k + 1):
-                    window = base_data_list[i:i + k]
+                for i in range(raw_n - k + 1):
+                    window = raw_parsed_for_danger[i:i + k]
                     pk.append([sum(row[p] for row in window) % 10 for p in range(L)])
             else:
-                pk = base_data_list
+                pk = raw_parsed_for_danger
 
             nk = len(pk)
             max_gap_for_k = 0
@@ -1106,4 +1110,4 @@ def get_history():
         return jsonify({'error': f'读取历史数据失败: {str(e)}'}), 500
 
 if __name__ == '__main__':
-    app.run( host='0.0.0.0', port=5002)
+    app.run( host='0.0.0.0', port=5002, debug=True)

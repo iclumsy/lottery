@@ -6,17 +6,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>cwh868 彩票专用</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=20260420j">
 </head>
 
 <body>
-    <main class="container">
+    <div class="container sidebar-collapsed">
         <header class="top-bar">
             <h1 class="title">cwh868 彩票专用 · 排列五分析台</h1>
-            <p class="top-subtitle">数据加载、遗漏分析、矩阵追踪一体化工作台</p>
+            <div class="top-actions" style="margin-left: auto; display: flex; align-items: center; gap: 12px;">
+                <p class="top-subtitle" style="margin: 0;">数据加载、遗漏分析、矩阵追踪一体化工作台</p>
+            </div>
         </header>
 
         <div class="analysis-overview">
+            <!-- 左侧边缘小巧悬浮折叠按钮 (提拔至此以防结构遮盖) -->
+            <button id="sidebarEdgeToggle" class="sidebar-edge-toggle" type="button" title="点击展开/收起左侧数据面板">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="arrow-icon">
+                    <path d="M9 18l6-6-6-6"/>
+                </svg>
+            </button>
+
             <!-- Quick Actions -->
             <section class="data-card">
                 <!-- Top Row: Latest Results -->
@@ -88,7 +97,7 @@
                 </div>
             </div>
         </div>
-    </main>
+    </div>
 
     <!-- 右侧悬浮备选面板 -->
     <div id="candidatePanel" class="candidate-panel collapsed">
@@ -119,8 +128,27 @@
                 <button id="intersectionCloseBtn" class="intersection-close-btn" type="button">✕</button>
             </div>
             <div class="intersection-dialog-body">
+                <div class="error-settings" style="margin-bottom:12px;">
+                    <span class="error-settings-title" id="intersectionSettingsTitle">容错条件（共 0 项备选）</span>
+                    <div class="error-controls">
+                        <div class="error-input-group">
+                            <label>容错下限:</label>
+                            <div class="custom-select" id="intersectionErrMin">
+                                <div class="custom-select-trigger"><span>0</span><i class="arrow"></i></div>
+                                <div class="custom-select-options"></div>
+                            </div>
+                        </div>
+                        <div class="error-input-group">
+                            <label>容错上限:</label>
+                            <div class="custom-select" id="intersectionErrMax">
+                                <div class="custom-select-trigger"><span>0</span><i class="arrow"></i></div>
+                                <div class="custom-select-options"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 <div class="intersection-info">
-                    <span>交集号码: <strong id="intersectionCountLabel">0</strong> 注</span>
+                    <span>符合条件的号码: <strong id="intersectionCountLabel">0</strong> 注</span>
                 </div>
                 <div class="result-action-group" style="margin-bottom:12px;">
                     <button id="intersectionCopyBtn" class="copy-btn-mini">
@@ -247,7 +275,8 @@
             </div>
         </section>
     </div>
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+
+    <script src="{{ url_for('static', filename='script.js') }}?v=20260420i"></script>
 </body>
 
 </html>

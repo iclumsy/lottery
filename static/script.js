@@ -309,6 +309,20 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load saved limit from localStorage and bind instant reload.
     const savedLimit = localStorage.getItem('lottery_load_limit');
     setLoadLimit(savedLimit || getCurrentLoadLimit());
+
+    // Sidebar toggle logic with floating edge tab
+    const toggleSidebarBtn = document.getElementById('sidebarEdgeToggle');
+    if (toggleSidebarBtn) {
+        const container = document.querySelector('.container');
+        
+        // 强制默认折叠
+        container.classList.add('sidebar-collapsed');
+
+        toggleSidebarBtn.addEventListener('click', () => {
+            container.classList.toggle('sidebar-collapsed');
+        });
+    }
+
     if (limitInput) {
         limitInput.addEventListener('change', async () => {
             const next = setLoadLimit(limitInput.value);
@@ -839,6 +853,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 tabBar.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 contentArea.innerHTML = '';
+                candidateSyncCallbacks = []; // 清空遗留回调
                 const dom = tab.render();
                 if (dom) contentArea.appendChild(dom);
             });
@@ -847,6 +862,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         statsDisplay.appendChild(tabBar);
         statsDisplay.appendChild(contentArea);
+        candidateSyncCallbacks = [];
         const defaultDom = tabs[0].render();
         if (defaultDom) contentArea.appendChild(defaultDom);
     }
@@ -1052,26 +1068,27 @@ document.addEventListener('DOMContentLoaded', () => {
         const card = document.createElement('div');
         card.className = 'error-panel animate-in';
         const toleranceOptions = Array.from({ length: 13 }, (_, i) => i)
-            .map(v => `<option value="${v}">${v}</option>`)
+            .map(v => `<div class="custom-option${v === 0 ? ' selected' : ''}">${v}</div>`)
             .join('');
 
         const controlHtml = `
-            <div class="error-settings">
+            <div class="error-controls-header">
                 <span class="error-settings-title">大底容错条件设置 (分析范围: 1-${totalSets} 期和)</span>
                 <div class="error-controls">
                     <div class="error-input-group">
                         <label>容错下限:</label>
-                        <select id="errMin" class="error-select">
-                            ${toleranceOptions}
-                        </select>
+                        <div class="custom-select" id="errMin">
+                            <div class="custom-select-trigger"><span>0</span><i class="arrow"></i></div>
+                            <div class="custom-select-options">${toleranceOptions}</div>
+                        </div>
                     </div>
                     <div class="error-input-group">
                         <label>容错上限:</label>
-                        <select id="errMax" class="error-select">
-                            ${toleranceOptions}
-                        </select>
+                        <div class="custom-select" id="errMax">
+                            <div class="custom-select-trigger"><span>2</span><i class="arrow"></i></div>
+                            <div class="custom-select-options">${toleranceOptions}</div>
+                        </div>
                     </div>
-                    <button id="applyErrBtn" class="apply-btn">立刻过滤分析</button>
                 </div>
             </div>
             <div class="error-result-container">
@@ -1093,30 +1110,38 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
         card.innerHTML = controlHtml;
 
-        const errMinInput = card.querySelector('#errMin');
-        const errMaxInput = card.querySelector('#errMax');
-        const applyBtn = card.querySelector('#applyErrBtn');
+        const errMinSelect = card.querySelector('#errMin');
+        const errMaxSelect = card.querySelector('#errMax');
         const copyBtn = card.querySelector('#copyErrBtn');
         const downloadBtn = card.querySelector('#downloadErrBtn');
         const errCountLabel = card.querySelector('#errCountLabel');
         const errResultArea = card.querySelector('#errResultArea');
-        errMinInput.value = '0';
-        errMaxInput.value = '2';
-        fitToleranceSelectWidth(errMinInput);
-        fitToleranceSelectWidth(errMaxInput);
+        // custom select 初始化设置默认值 (第一个子元素)
+        initCustomSelect(errMinSelect);
+        initCustomSelect(errMaxSelect);
+
+        // 如果想指定默认值，可以在初始化后通过 JS 修改 DOM。
+        // 这里容错上限默认定位到第 3 个（value=2），如果在 options 中有的话：
+        const opts = errMaxSelect.querySelectorAll('.custom-option');
+        if (opts.length > 2) {
+            errMaxSelect.querySelector('.custom-select-trigger span').textContent = '2';
+            opts.forEach(o => o.classList.remove('selected'));
+            opts[2].classList.add('selected');
+        }
 
         let currentResults = [];
 
+
         function updateResults() {
-            let minErr = parseInt(errMinInput.value, 10);
+            let minErr = getCustomSelectValue(errMinSelect);
             if (isNaN(minErr)) minErr = 0;
-            let maxErr = parseInt(errMaxInput.value, 10);
+            let maxErr = getCustomSelectValue(errMaxSelect);
             if (isNaN(maxErr)) maxErr = 0;
 
             if (minErr > maxErr) {
                 [minErr, maxErr] = [maxErr, minErr];
-                errMinInput.value = minErr;
-                errMaxInput.value = maxErr;
+                setCustomSelectValue(errMinSelect, minErr);
+                setCustomSelectValue(errMaxSelect, maxErr);
             }
 
             const minCount = Math.max(0, totalSets - maxErr);
@@ -1133,9 +1158,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
             errCountLabel.textContent = currentResults.length;
             errResultArea.innerHTML = currentResults.map(num => `<div class="grid-num-item">${num}</div>`).join('');
+            
+            // 数据变化时同步可能会禁用的按钮
+            candidateSyncCallbacks.forEach(cb => cb());
         }
 
-        applyBtn.addEventListener('click', updateResults);
+        initCustomSelect(errMinSelect, updateResults);
+        initCustomSelect(errMaxSelect, updateResults);
+        
+        // 初始渲染
         updateResults();
 
         // 添加到备选按钮
@@ -1144,8 +1175,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const periodLabel = currentPeriodSum === 1 ? '1期' : `${currentPeriodSum}期和`;
             const addBtn = createAddCandidateButton(
                 () => {
-                    const minVal = errMinInput.value;
-                    const maxVal = errMaxInput.value;
+                    const minVal = getCustomSelectValue(errMinSelect);
+                    const maxVal = getCustomSelectValue(errMaxSelect);
                     return `容错分析 (${periodLabel}) [${minVal},${maxVal}]`;
                 },
                 () => [...currentResults]
@@ -1209,7 +1240,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const card = document.createElement('div');
         card.className = 'error-panel animate-in';
         const toleranceOptions = Array.from({ length: 13 }, (_, i) => i)
-            .map(v => `<option value="${v}">${v}</option>`)
+            .map(v => `<div class="custom-option${v === 0 ? ' selected' : ''}">${v}</div>`)
             .join('');
         const baseButtons = bases
             .map((base, idx) => {
@@ -1225,17 +1256,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="error-controls">
                     <div class="error-input-group">
                         <label>容错下限:</label>
-                        <select id="transformErrMin" class="error-select">
-                            ${toleranceOptions}
-                        </select>
+                        <div id="transformErrMin" class="custom-select">
+                            <div class="custom-select-trigger"><span>0</span><div class="arrow"></div></div>
+                            <div class="custom-select-options">${toleranceOptions}</div>
+                        </div>
                     </div>
                     <div class="error-input-group">
                         <label>容错上限:</label>
-                        <select id="transformErrMax" class="error-select">
-                            ${toleranceOptions}
-                        </select>
+                        <div id="transformErrMax" class="custom-select">
+                            <div class="custom-select-trigger"><span>2</span><div class="arrow"></div></div>
+                            <div class="custom-select-options">${toleranceOptions}</div>
+                        </div>
                     </div>
-                    <button id="applyTransformBtn" class="apply-btn">立刻过滤分析</button>
                 </div>
             </div>
             <div class="error-result-container">
@@ -1265,15 +1297,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const minInput = card.querySelector('#transformErrMin');
         const maxInput = card.querySelector('#transformErrMax');
-        const applyBtn = card.querySelector('#applyTransformBtn');
         const copyBtn = card.querySelector('#copyTransformBtn');
         const downloadBtn = card.querySelector('#downloadTransformBtn');
         const countLabel = card.querySelector('#transformCountLabel');
         const metaLabel = card.querySelector('#transformMeta');
         const resultArea = card.querySelector('#transformResultArea');
         const switchButtons = Array.from(card.querySelectorAll('.dadi-transform-base-btn'));
-        fitToleranceSelectWidth(minInput);
-        fitToleranceSelectWidth(maxInput);
 
         let activeSlot = String(bases[0].slot);
         let currentResults = [];
@@ -1290,16 +1319,16 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!activeBase) return;
 
             const currentTolerance = toleranceBySlot.get(activeSlot) || { minErr: 0, maxErr: 2 };
-            let minErr = Number.parseInt(minInput.value, 10);
+            let minErr = getCustomSelectValue(minInput);
             if (Number.isNaN(minErr)) minErr = currentTolerance.minErr;
-            let maxErr = Number.parseInt(maxInput.value, 10);
+            let maxErr = getCustomSelectValue(maxInput);
             if (Number.isNaN(maxErr)) maxErr = currentTolerance.maxErr;
 
             if (minErr > maxErr) {
                 [minErr, maxErr] = [maxErr, minErr];
             }
-            minInput.value = String(minErr);
-            maxInput.value = String(maxErr);
+            setCustomSelectValue(minInput, minErr);
+            setCustomSelectValue(maxInput, maxErr);
             toleranceBySlot.set(activeSlot, { minErr, maxErr });
 
             const totalSets = Number.isFinite(activeBase.totalSets) ? activeBase.totalSets : 0;
@@ -1340,13 +1369,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!slot) return;
                 setActiveSlot(slot);
                 const currentTolerance = toleranceBySlot.get(activeSlot) || { minErr: 0, maxErr: 2 };
-                minInput.value = String(currentTolerance.minErr);
-                maxInput.value = String(currentTolerance.maxErr);
+                setCustomSelectValue(minInput, currentTolerance.minErr);
+                setCustomSelectValue(maxInput, currentTolerance.maxErr);
                 updateTransformResults();
             });
         });
 
-        applyBtn.addEventListener('click', updateTransformResults);
+        initCustomSelect(minInput, updateTransformResults);
+        initCustomSelect(maxInput, updateTransformResults);
 
         // 添加到备选按钮
         const addCandidateBtnContainer = card.querySelector('#copyTransformBtn')?.closest('.result-action-group');
@@ -1406,23 +1436,73 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         setActiveSlot(activeSlot);
-        minInput.value = '0';
-        maxInput.value = '2';
+        setCustomSelectValue(minInput, 0);
+        setCustomSelectValue(maxInput, 2);
         updateTransformResults();
 
         wrap.appendChild(card);
         return wrap;
     }
 
-    function fitToleranceSelectWidth(selectEl) {
-        if (!selectEl || !selectEl.options || !selectEl.options.length) return;
-        let maxLen = 1;
-        for (const opt of selectEl.options) {
-            maxLen = Math.max(maxLen, String(opt.text || '').trim().length);
-        }
-        const widthPx = Math.max(92, Math.round(maxLen * 14 + 54));
-        selectEl.style.width = `${widthPx}px`;
+    // 提权全局的自定义下拉框读写方法
+    function getCustomSelectValue(el) {
+        const text = el.querySelector('.custom-select-trigger span')?.textContent || '0';
+        return parseInt(text, 10);
     }
+
+    function setCustomSelectValue(el, val) {
+        el.querySelector('.custom-select-trigger span').textContent = val;
+        const opts = el.querySelectorAll('.custom-option');
+        opts.forEach(o => {
+            if(parseInt(o.textContent, 10) === val) o.classList.add('selected');
+            else o.classList.remove('selected');
+        });
+    }
+
+    // 初始化 Custom Select 可选带回调
+    function initCustomSelect(container, onChangeCallback = null) {
+        if (!container) return;
+        if (container.dataset.initialized) {
+            // 更新回调
+            container._onChangeCallback = onChangeCallback;
+            return;
+        }
+        container.dataset.initialized = 'true';
+        container._onChangeCallback = onChangeCallback;
+
+        const trigger = container.querySelector('.custom-select-trigger');
+        const optionsContainer = container.querySelector('.custom-select-options');
+        
+        trigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isOpen = container.classList.contains('open');
+            // 互斥，关闭其他打开的
+            document.querySelectorAll('.custom-select').forEach(el => el.classList.remove('open'));
+            if (!isOpen) {
+                container.classList.add('open');
+            }
+        });
+
+        optionsContainer.addEventListener('click', (e) => {
+            if (e.target.classList.contains('custom-option')) {
+                const val = e.target.textContent;
+                const oldVal = trigger.querySelector('span').textContent;
+                trigger.querySelector('span').textContent = val;
+                optionsContainer.querySelectorAll('.custom-option').forEach(opt => opt.classList.remove('selected'));
+                e.target.classList.add('selected');
+                container.classList.remove('open');
+                
+                if (val !== oldVal && container._onChangeCallback) {
+                    container._onChangeCallback(parseInt(val, 10));
+                }
+            }
+        });
+    }
+
+    // 点击页面任意地方关闭所有下拉列表
+    document.addEventListener('click', () => {
+        document.querySelectorAll('.custom-select').forEach(el => el.classList.remove('open'));
+    });
 
     function normalizeSourceRows() {
         const rows = getEffectiveLines(currentSourceLines || [])
@@ -2463,6 +2543,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let candidatePool = [];
     let candidateIdCounter = 0;
     let lastIntersectionResults = [];
+    let candidateSyncCallbacks = [];
 
     function addCandidate(label, numbers) {
         if (!numbers || !numbers.length) return;
@@ -2489,17 +2570,105 @@ document.addEventListener('DOMContentLoaded', () => {
         renderCandidatePanel();
     }
 
-    function computeIntersection() {
+    function computeIntersection(minErr, maxErr) {
         if (candidatePool.length === 0) return [];
-        if (candidatePool.length === 1) return [...candidatePool[0].numbers];
+        const totalSets = candidatePool.length;
 
-        // 以第一个备选的号码集合为初始值，逐步与后续备选取交集
-        let result = new Set(candidatePool[0].numbers);
-        for (let i = 1; i < candidatePool.length; i++) {
-            const nextSet = new Set(candidatePool[i].numbers);
-            result = new Set([...result].filter(num => nextSet.has(num)));
+        // 统计每个号码出现在多少个备选中
+        const counts = new Map();
+        candidatePool.forEach(c => {
+            const seen = new Set(c.numbers);
+            seen.forEach(num => {
+                counts.set(num, (counts.get(num) || 0) + 1);
+            });
+        });
+
+        // 根据容错范围过滤
+        const minCount = Math.max(0, totalSets - maxErr);
+        const maxCount = totalSets - minErr;
+        const results = [];
+        counts.forEach((count, num) => {
+            if (count >= minCount && count <= maxCount) {
+                results.push(num);
+            }
+        });
+        return results.sort();
+    }
+
+    function buildIntersectionToleranceOptions(total) {
+        const intersectionErrMin = document.getElementById('intersectionErrMin');
+        const intersectionErrMax = document.getElementById('intersectionErrMax');
+        const settingsTitle = document.getElementById('intersectionSettingsTitle');
+        if (!intersectionErrMin || !intersectionErrMax) return;
+
+        // 容错范围 0 到 total-1
+        const maxTolerance = Math.max(0, total - 1);
+        const optionsHtml = Array.from({ length: maxTolerance + 1 }, (_, i) =>
+            `<div class="custom-option${i===0?' selected':''}">${i}</div>`
+        ).join('');
+        intersectionErrMin.querySelector('.custom-select-options').innerHTML = optionsHtml;
+        intersectionErrMax.querySelector('.custom-select-options').innerHTML = optionsHtml;
+        intersectionErrMin.querySelector('.custom-select-trigger span').textContent = '0';
+        intersectionErrMax.querySelector('.custom-select-trigger span').textContent = '0';
+        
+        initCustomSelect(intersectionErrMin, applyIntersectionFilter);
+        initCustomSelect(intersectionErrMax, applyIntersectionFilter);
+
+        if (settingsTitle) {
+            settingsTitle.textContent = `容错条件（共 ${total} 项备选）`;
         }
-        return [...result].sort();
+    }
+
+    function getCustomSelectValueById(id) {
+        const span = document.querySelector(`#${id} .custom-select-trigger span`);
+        return span ? parseInt(span.textContent, 10) : 0;
+    }
+
+    function applyIntersectionFilter() {
+        let minErr = getCustomSelectValueById('intersectionErrMin');
+        let maxErr = getCustomSelectValueById('intersectionErrMax');
+        if (isNaN(minErr)) minErr = 0;
+        if (isNaN(maxErr)) maxErr = 0;
+        if (minErr > maxErr) [minErr, maxErr] = [maxErr, minErr];
+
+        const results = computeIntersection(minErr, maxErr);
+        lastIntersectionResults = results;
+        if (intersectionCountLabel) {
+            intersectionCountLabel.textContent = results.length;
+        }
+        if (intersectionResultArea) {
+            intersectionResultArea.innerHTML = results.length > 0
+                ? results.map(num => `<div class="grid-num-item">${num}</div>`).join('')
+                : '<p class="empty-hint">无符合条件的结果</p>';
+        }
+    }
+
+    function showIntersectionModal() {
+        if (!intersectionModal) return;
+
+        // 初始化容错选项
+        buildIntersectionToleranceOptions(candidatePool.length);
+
+        // 默认容错 0,0 即精确交集
+        const results = computeIntersection(0, 0);
+        lastIntersectionResults = results;
+
+        if (intersectionCountLabel) {
+            intersectionCountLabel.textContent = results.length;
+        }
+        if (intersectionResultArea) {
+            intersectionResultArea.innerHTML = results.length > 0
+                ? results.map(num => `<div class="grid-num-item">${num}</div>`).join('')
+                : '<p class="empty-hint">无符合条件的结果</p>';
+        }
+
+        // 绑定重新过滤按钮
+        const applyBtn = document.getElementById('intersectionApplyBtn');
+        if (applyBtn) {
+            applyBtn.onclick = applyIntersectionFilter;
+        }
+
+        intersectionModal.style.display = 'flex';
     }
 
     function renderCandidatePanel() {
@@ -2545,25 +2714,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? '求交集（至少选2项）'
                 : `求交集（${candidatePool.length} 项）`;
         }
-    }
 
-    function showIntersectionModal(results) {
-        lastIntersectionResults = results;
-        if (!intersectionModal) return;
-
-        if (intersectionCountLabel) {
-            intersectionCountLabel.textContent = results.length;
-        }
-        if (intersectionResultArea) {
-            if (results.length > 0) {
-                intersectionResultArea.innerHTML = results.map(num =>
-                    `<div class="grid-num-item">${num}</div>`
-                ).join('');
-            } else {
-                intersectionResultArea.innerHTML = '<p class="empty-hint">无交集结果</p>';
-            }
-        }
-        intersectionModal.style.display = 'flex';
+        // 同步所有添加按钮状态
+        candidateSyncCallbacks.forEach(cb => cb());
     }
 
     function hideIntersectionModal() {
@@ -2584,8 +2737,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (candidateIntersectBtn) {
         candidateIntersectBtn.addEventListener('click', () => {
-            const results = computeIntersection();
-            showIntersectionModal(results);
+            showIntersectionModal();
         });
     }
 
@@ -2646,35 +2798,52 @@ document.addEventListener('DOMContentLoaded', () => {
     renderCandidatePanel();
 
     // 创建添加到备选按钮的通用工厂函数
+    function isCandidateLabelExists(label) {
+        return candidatePool.some(c => c.label === label);
+    }
+
     function createAddCandidateButton(getLabel, getNumbers) {
         const btn = document.createElement('button');
         btn.className = 'add-candidate-btn';
-        btn.innerHTML = `
+        const defaultHtml = `
             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"></path></svg>
             添加到备选
         `;
+        const addedHtml = `
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"></path></svg>
+            已添加
+        `;
+
+        function syncState() {
+            const label = getLabel();
+            if (isCandidateLabelExists(label)) {
+                btn.disabled = true;
+                btn.classList.add('added');
+                btn.innerHTML = addedHtml;
+            } else {
+                btn.disabled = false;
+                btn.classList.remove('added');
+                btn.innerHTML = defaultHtml;
+            }
+        }
+
+        btn.innerHTML = defaultHtml;
         btn.addEventListener('click', () => {
+            if (btn.disabled) return;
             const label = getLabel();
             const numbers = getNumbers();
             if (!numbers || !numbers.length) {
                 alert('当前无结果可添加');
                 return;
             }
+            if (isCandidateLabelExists(label)) return;
             addCandidate(label, numbers);
-            // 按钮反馈
-            btn.classList.add('added');
-            btn.innerHTML = `
-                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"></path></svg>
-                已添加
-            `;
-            setTimeout(() => {
-                btn.classList.remove('added');
-                btn.innerHTML = `
-                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"></path></svg>
-                    添加到备选
-                `;
-            }, 1500);
+            syncState();
         });
+
+        // 注册回调：备选池变化时自动同步按钮状态
+        candidateSyncCallbacks.push(syncState);
+        syncState();
         return btn;
     }
 
