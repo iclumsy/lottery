@@ -508,9 +508,9 @@ def wechat_push_worker():
         except Exception as e:
             print("微信推送后台任务异常:", e)
 
-# 启动后台推送线程
-push_thread = threading.Thread(target=wechat_push_worker, daemon=True)
-push_thread.start()
+# 启动后台推送线程（已关闭）
+# push_thread = threading.Thread(target=wechat_push_worker, daemon=True)
+# push_thread.start()
 
 def normalize_dadi_numbers(raw_input):
     if raw_input is None:
