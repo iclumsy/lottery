@@ -706,6 +706,10 @@ def compute_dadi(k_period, n_lines, raw_parsed_tuple, L):
 def index():
     return render_template('index.html')
 
+@app.route('/help')
+def help_page():
+    return render_template('help.html')
+
 @app.route(ACCESS_LOG_ROUTE_PATH)
 def access_logs_page():
     expire_at_raw = request.args.get('exp', '').strip()
