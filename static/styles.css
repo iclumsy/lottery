@@ -2617,13 +2617,33 @@ body.matrix-open {
 
     .top-bar {
         align-items: flex-start;
-        gap: 8px;
+        gap: 6px;
+        flex-direction: column;
+    }
+
+    .title {
+        font-size: 0.88rem;
+        letter-spacing: 0;
+        padding: 0;
+        line-height: 1.3;
+    }
+
+    .top-actions {
+        width: 100%;
+        gap: 6px !important;
+        flex-wrap: wrap;
     }
 
     .top-subtitle {
         width: 100%;
         margin-left: 0;
         text-align: left;
+        font-size: 0.7rem;
+        display: none;
+    }
+
+    .sidebar-edge-toggle {
+        display: none;
     }
 
     .analysis-overview,
@@ -2974,16 +2994,31 @@ body.matrix-open {
     }
 
     .container {
-        padding: 12px 10px;
+        padding: 10px 8px;
     }
 
     .title {
-        font-size: 0.84rem;
-        letter-spacing: 0.04em;
+        font-size: 0.82rem;
+        letter-spacing: 0;
     }
 
     .period-sum-controls {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 6px;
+    }
+
+    .period-sum-section {
+        padding: 10px 8px;
+    }
+
+    .period-sum-title {
+        font-size: 0.82rem;
+    }
+
+    .period-sum-header .analyze-btn {
+        height: 30px;
+        padding: 0 10px;
+        font-size: 0.76rem;
     }
 
     .gap-grid {
@@ -2996,8 +3031,9 @@ body.matrix-open {
     }
 
     .sum-btn {
-        font-size: 0.76rem;
-        min-height: 34px;
+        font-size: 0.74rem;
+        min-height: 32px;
+        padding: 4px 2px;
     }
 
     .digit-badge {
@@ -3497,30 +3533,83 @@ body.matrix-open {
 /* 移动端适配 */
 @media (max-width: 640px) {
     .candidate-panel-inner {
-        width: 240px;
+        width: min(240px, 65vw);
     }
 
     .candidate-toggle-tab {
-        width: 34px;
-        min-height: 64px;
+        width: 30px;
+        min-height: 56px;
+        padding: 6px 3px;
+    }
+
+    .candidate-toggle-icon {
+        font-size: 1rem;
+    }
+
+    .candidate-panel-header {
+        padding: 10px 10px;
+    }
+
+    .candidate-panel-header h3 {
+        font-size: 0.85rem;
+    }
+
+    .candidate-item {
+        padding: 6px 8px;
+        gap: 6px;
+    }
+
+    .candidate-item-label {
+        font-size: 0.72rem;
+    }
+
+    .candidate-actions {
+        padding: 8px 10px;
+    }
+
+    .candidate-intersect-btn {
+        padding: 8px;
+        font-size: 0.82rem;
     }
 
     .intersection-dialog {
         width: 95%;
         max-height: 85vh;
     }
+
+    .intersection-dialog-header {
+        padding: 12px 14px;
+    }
+
+    .intersection-dialog-body {
+        padding: 12px 14px;
+    }
+
+    .error-input-group label {
+        font-size: 0.85rem;
+    }
+
+    .custom-select {
+        width: 64px;
+    }
+
+    .custom-select-trigger {
+        min-height: 36px;
+        padding: 6px 20px 6px 8px;
+        font-size: 0.88rem;
+    }
 }
 
 /* 竖向超宽屏 / 长宽比响应式优化 (解决极窄屏压爆版面的问题) */
 @media (max-width: 1080px) {
     .container {
-        padding: 12px 14px 16px 14px !important;
+        padding: 12px 14px 16px 14px;
     }
     
     .analysis-overview,
     .content-layout {
         /* 取消双栏网格，完全改为垂直堆叠 */
-        grid-template-columns: 1fr !important;
+        grid-template-columns: 1fr;
         gap: 16px;
     }
 
