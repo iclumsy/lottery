@@ -3201,12 +3201,11 @@ body.matrix-open {
 /* ═══ 备选面板 (Candidate Panel) ═══ */
 .candidate-panel {
     position: fixed;
-    top: 50%;
+    top: 90px;
     right: 0;
-    transform: translateY(-50%);
     z-index: 900;
     display: flex;
-    align-items: stretch;
+    align-items: flex-start;
     pointer-events: auto;
     transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
