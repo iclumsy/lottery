@@ -977,7 +977,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="dadi-step-content">
                         <div class="error-result-container dadi-result-container">
                             <div class="error-result-header">
-                                <span class="result-count-info">大底结果过滤出 000-999 内不考虑顺序的组合: <strong>${results.dadi.length}</strong> 注</span>
+                                <span class="result-count-info">大底结果过滤出 000-999 内不考虑顺序的组合: <strong>${results.dadi.length}</strong> 注 <span id="dadiRetreatVerify"></span></span>
                                 <div class="result-action-group">
                                     <button id="copyDadiBtn" class="copy-btn-mini">
                                         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"></path></svg>
@@ -1002,6 +1002,12 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
         `;
         card.innerHTML = rulesHtml;
+
+        // 倒退模式验证
+        const dadiVerifyEl = card.querySelector('#dadiRetreatVerify');
+        if (dadiVerifyEl) {
+            dadiVerifyEl.innerHTML = buildRetreatIntersectHtml(results.dadi);
+        }
 
         // 添加到备选按钮
         const addCandidateBtnContainer = card.querySelector('#copyDadiBtn')?.closest('.result-action-group');
@@ -1067,6 +1073,48 @@ document.addEventListener('DOMContentLoaded', () => {
         return code.split('').map((ch, i) => ((parseInt(ch, 10) - (offset[i] || 0)) % 10 + 10) % 10).join('');
     }
 
+    // ── 倒退模式验证辅助 ──
+    // 获取倒退模式下被隐藏的最新开奖前三位号码
+    function getRetreatVerifyTarget() {
+        if (!isRetreatMode || !latestOpenNumbers || latestOpenNumbers.length < 3) return null;
+        return latestOpenNumbers.slice(0, 3);
+    }
+
+    // 根据 counts 对象计算实际容错值（缺席几组），返回 HTML 标签
+    // counts: { "000": hitCount, ... }, totalSets: 总组数, periodSumOffset: 偏移量
+    function buildRetreatActualErrorHtml(counts, totalSets, periodSumOffset) {
+        const target = getRetreatVerifyTarget();
+        if (!target || !counts || !totalSets) return '';
+
+        // 如果有偏移，需要将 target 转到分析空间来查 counts
+        // counts 是分析空间的，target 是原始空间的
+        // 原始 = 分析 - offset  =>  分析 = 原始 + offset
+        let lookupKey = target;
+        if (periodSumOffset) {
+            lookupKey = target.split('').map((ch, i) => ((parseInt(ch, 10) + (periodSumOffset[i] || 0)) % 10)).join('');
+        }
+
+        const hitCount = counts[lookupKey] || 0;
+        const missCount = totalSets - hitCount;
+        const isHit = missCount === 0;
+        const color = isHit ? '#10b981' : (missCount <= 2 ? '#f59e0b' : '#ef4444');
+
+        return `<span class="retreat-actual-error" style="color:${color}" title="实际开奖 ${target} 在${totalSets}组中缺席${missCount}组">实际: <strong>${missCount}</strong></span>`;
+    }
+
+    // 交集结果验证：检查 target 是否在最终结果集中
+    function buildRetreatIntersectHtml(results) {
+        const target = getRetreatVerifyTarget();
+        if (!target) return '';
+
+        const hit = results.includes(target);
+        if (hit) {
+            return `<span class="retreat-actual-error" style="color:#10b981" title="实际开奖 ${target} 在交集结果中">✅ ${target} 命中</span>`;
+        } else {
+            return `<span class="retreat-actual-error" style="color:#ef4444" title="实际开奖 ${target} 不在交集结果中">❌ ${target} 未命中</span>`;
+        }
+    }
+
     function renderDadiError(results, periodSumOffset) {
         if (!results || !results.counts) return document.createElement('div');
         const counts = results.counts;
@@ -1096,6 +1144,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div class="custom-select-options">${toleranceOptions}</div>
                         </div>
                     </div>
+                    <span id="errRetreatVerify"></span>
                 </div>
             </div>
             <div class="error-result-container">
@@ -1171,6 +1220,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
             errCountLabel.textContent = currentResults.length;
             errResultArea.innerHTML = currentResults.map(num => `<div class="grid-num-item">${num}</div>`).join('');
+            
+            // 倒退模式验证
+            const verifyContainer = card.querySelector('#errRetreatVerify');
+            if (verifyContainer) {
+                verifyContainer.innerHTML = buildRetreatActualErrorHtml(counts, totalSets, periodSumOffset);
+            }
             
             // 数据变化时同步可能会禁用的按钮
             candidateSyncCallbacks.forEach(cb => cb());
@@ -1286,6 +1341,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div class="custom-select-options">${toleranceOptions}</div>
                         </div>
                     </div>
+                    <span id="transformRetreatVerify"></span>
                 </div>
             </div>
             <div class="error-result-container">
@@ -1386,6 +1442,14 @@ document.addEventListener('DOMContentLoaded', () => {
             resultArea.innerHTML = currentResults.length
                 ? currentResults.map(num => `<div class="grid-num-item">${num}</div>`).join('')
                 : '<p class="empty-hint">当前容错范围无结果</p>';
+
+            // 倒退模式验证
+            const verifyContainer = card.querySelector('#transformRetreatVerify');
+            if (verifyContainer) {
+                const activeBase = baseMap.get(activeSlot);
+                const activeCounts = activeBase ? (activeBase.counts || {}) : {};
+                verifyContainer.innerHTML = buildRetreatActualErrorHtml(activeCounts, totalSets, periodSumOffset);
+            }
 
             // 数据变化时同步备选按钮状态
             candidateSyncCallbacks.forEach(cb => cb());
@@ -2675,6 +2739,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? results.map(num => `<div class="grid-num-item">${num}</div>`).join('')
                 : '<p class="empty-hint">无符合条件的结果</p>';
         }
+        // 倒退模式验证
+        const verifyEl1 = document.getElementById('intersectionRetreatVerify');
+        if (verifyEl1) verifyEl1.innerHTML = buildRetreatIntersectHtml(results);
     }
 
     function showIntersectionModal() {
@@ -2695,6 +2762,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? results.map(num => `<div class="grid-num-item">${num}</div>`).join('')
                 : '<p class="empty-hint">无符合条件的结果</p>';
         }
+        // 倒退模式验证
+        const intersectVerifyEl = document.getElementById('intersectionRetreatVerify');
+        if (intersectVerifyEl) intersectVerifyEl.innerHTML = buildRetreatIntersectHtml(results);
 
         // 绑定重新过滤按钮
         const applyBtn = document.getElementById('intersectionApplyBtn');
