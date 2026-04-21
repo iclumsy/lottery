@@ -1008,6 +1008,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (addCandidateBtnContainer) {
             const periodLabel = currentPeriodSum === 1 ? '1期' : `${currentPeriodSum}期和`;
             const addBtn = createAddCandidateButton(
+                () => `dadi-gen:${currentPeriodSum}`,
                 () => `大底生成 (${periodLabel})`,
                 () => results.dadi
             );
@@ -1186,6 +1187,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (addCandidateBtnContainer) {
             const periodLabel = currentPeriodSum === 1 ? '1期' : `${currentPeriodSum}期和`;
             const addBtn = createAddCandidateButton(
+                () => {
+                    const minVal = getCustomSelectValue(errMinSelect);
+                    const maxVal = getCustomSelectValue(errMaxSelect);
+                    return `dadi-err:${currentPeriodSum}:${minVal}:${maxVal}`;
+                },
                 () => {
                     const minVal = getCustomSelectValue(errMinSelect);
                     const maxVal = getCustomSelectValue(errMaxSelect);
@@ -1380,6 +1386,9 @@ document.addEventListener('DOMContentLoaded', () => {
             resultArea.innerHTML = currentResults.length
                 ? currentResults.map(num => `<div class="grid-num-item">${num}</div>`).join('')
                 : '<p class="empty-hint">当前容错范围无结果</p>';
+
+            // 数据变化时同步备选按钮状态
+            candidateSyncCallbacks.forEach(cb => cb());
         }
 
         switchButtons.forEach(btn => {
@@ -1402,6 +1411,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (addCandidateBtnContainer) {
             const periodLabel = currentPeriodSum === 1 ? '1期' : `${currentPeriodSum}期和`;
             const addBtn = createAddCandidateButton(
+                () => {
+                    const minVal = getCustomSelectValue(minInput);
+                    const maxVal = getCustomSelectValue(maxInput);
+                    return `dadi-transform:${activeSlot}:${currentPeriodSum}:${minVal}:${maxVal}`;
+                },
                 () => {
                     const activeBase = baseMap.get(activeSlot);
                     const baseName = activeBase && activeBase.name ? activeBase.name : `大底${activeSlot}`;
@@ -2564,11 +2578,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let lastIntersectionResults = [];
     let candidateSyncCallbacks = [];
 
-    function addCandidate(label, numbers) {
+    function addCandidate(sourceKey, label, numbers) {
         if (!numbers || !numbers.length) return;
         candidateIdCounter++;
         candidatePool.push({
             id: candidateIdCounter,
+            sourceKey: sourceKey,
             label: label,
             numbers: [...numbers]
         });
@@ -2817,11 +2832,11 @@ document.addEventListener('DOMContentLoaded', () => {
     renderCandidatePanel();
 
     // 创建添加到备选按钮的通用工厂函数
-    function isCandidateLabelExists(label) {
-        return candidatePool.some(c => c.label === label);
+    function isCandidateSourceKeyExists(sourceKey) {
+        return candidatePool.some(c => c.sourceKey === sourceKey);
     }
 
-    function createAddCandidateButton(getLabel, getNumbers) {
+    function createAddCandidateButton(getSourceKey, getLabel, getNumbers) {
         const btn = document.createElement('button');
         btn.className = 'add-candidate-btn';
         const defaultHtml = `
@@ -2834,8 +2849,8 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
 
         function syncState() {
-            const label = getLabel();
-            if (isCandidateLabelExists(label)) {
+            const sourceKey = getSourceKey();
+            if (isCandidateSourceKeyExists(sourceKey)) {
                 btn.disabled = true;
                 btn.classList.add('added');
                 btn.innerHTML = addedHtml;
@@ -2849,14 +2864,15 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.innerHTML = defaultHtml;
         btn.addEventListener('click', () => {
             if (btn.disabled) return;
+            const sourceKey = getSourceKey();
             const label = getLabel();
             const numbers = getNumbers();
             if (!numbers || !numbers.length) {
                 alert('当前无结果可添加');
                 return;
             }
-            if (isCandidateLabelExists(label)) return;
-            addCandidate(label, numbers);
+            if (isCandidateSourceKeyExists(sourceKey)) return;
+            addCandidate(sourceKey, label, numbers);
             syncState();
         });
 
