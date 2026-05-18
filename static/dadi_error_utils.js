@@ -53,6 +53,28 @@
         return [...new Set(numbers.map(code => applyPeriodSumOffset(code, periodSumOffset)))].sort();
     }
 
+    function computeDadiTransformNumbers(base, minErr, maxErr, periodSumOffset) {
+        if (!base || !base.sourceCount || !base.totalSets || !base.counts) return [];
+
+        const counts = base.counts || {};
+        const totalSets = Number.isFinite(base.totalSets) ? base.totalSets : 0;
+        const minCount = Math.max(0, totalSets - maxErr);
+        const maxCount = totalSets - minErr;
+        const numbers = [];
+
+        for (let i = 0; i < 1000; i++) {
+            const code = i.toString().padStart(3, '0');
+            const hit = counts[code] || 0;
+            if (hit >= minCount && hit <= maxCount) {
+                numbers.push(code);
+            }
+        }
+
+        if (!periodSumOffset) return numbers;
+
+        return [...new Set(numbers.map(code => applyPeriodSumOffset(code, periodSumOffset)))].sort();
+    }
+
     function getDadiErrorPeriodLabel(period) {
         return period === 1 ? '1期' : `${period}期和`;
     }
@@ -92,11 +114,51 @@
         }));
     }
 
+    function buildDadiTransformCandidate({
+        period,
+        minErr,
+        maxErr,
+        base,
+        periodSumOffset = null,
+    }) {
+        const range = normalizeToleranceRange(minErr, maxErr);
+        const numbers = computeDadiTransformNumbers(
+            base,
+            range.minErr,
+            range.maxErr,
+            periodSumOffset
+        );
+        const slot = base && base.slot;
+        const baseName = base && base.name ? base.name : `大底${slot}`;
+        const periodLabel = getDadiErrorPeriodLabel(period);
+
+        return {
+            sourceKey: `dadi-transform:${slot}:${period}:${range.minErr}:${range.maxErr}`,
+            label: `大底转换 ${baseName} (${periodLabel}) [${range.minErr},${range.maxErr}]`,
+            numbers,
+        };
+    }
+
+    function buildDadiTransformCandidates(periodResults, minErr, maxErr) {
+        if (!Array.isArray(periodResults)) return [];
+
+        return periodResults.map(item => buildDadiTransformCandidate({
+            period: item.period,
+            minErr,
+            maxErr,
+            base: item.base,
+            periodSumOffset: item.periodSumOffset || null,
+        }));
+    }
+
     return {
         applyPeriodSumOffset,
         buildDadiErrorCandidate,
         buildDadiErrorCandidates,
+        buildDadiTransformCandidate,
+        buildDadiTransformCandidates,
         computeDadiErrorNumbers,
+        computeDadiTransformNumbers,
         getDadiErrorPeriodLabel,
         normalizeToleranceRange,
     };

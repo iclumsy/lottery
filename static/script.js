@@ -1521,25 +1521,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const minCount = Math.max(0, totalSets - maxErr);
-            const maxCount = totalSets - minErr;
-            const counts = activeBase.counts || {};
-            const nextResults = [];
-            for (let i = 0; i < 1000; i++) {
-                const code = String(i).padStart(3, '0');
-                const hit = counts[code] || 0;
-                if (hit >= minCount && hit <= maxCount) {
-                    nextResults.push(code);
-                }
-            }
-
-            // 容错过滤完成后，将结果转回 1 期空间
-            if (periodSumOffset) {
-                currentResults = nextResults.map(code => applyPeriodSumOffset(code, periodSumOffset));
-                currentResults = [...new Set(currentResults)].sort();
-            } else {
-                currentResults = nextResults;
-            }
+            currentResults = dadiErrorUtils.computeDadiTransformNumbers
+                ? dadiErrorUtils.computeDadiTransformNumbers(activeBase, minErr, maxErr, periodSumOffset)
+                : [];
 
             countLabel.innerHTML = `${title} 符合条件的大底号码: <strong>${currentResults.length}</strong> 注`;
             metaLabel.innerHTML = `原始大底 <strong>${sourceCount}</strong> 注；转换大底 <strong>${totalSets}</strong> 组；容错范围 <strong>[${minErr}, ${maxErr}]</strong>`;
@@ -1557,6 +1541,122 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // 数据变化时同步备选按钮状态
             candidateSyncCallbacks.forEach(cb => cb());
+        }
+
+        function getCurrentDadiTransformCandidate() {
+            const activeBase = baseMap.get(activeSlot);
+            const minVal = getCustomSelectValue(minInput);
+            const maxVal = getCustomSelectValue(maxInput);
+            return dadiErrorUtils.buildDadiTransformCandidate
+                ? dadiErrorUtils.buildDadiTransformCandidate({
+                    period: currentPeriodSum,
+                    minErr: minVal,
+                    maxErr: maxVal,
+                    base: activeBase,
+                    periodSumOffset,
+                })
+                : {
+                    sourceKey: `dadi-transform:${activeSlot}:${currentPeriodSum}:${minVal}:${maxVal}`,
+                    label: `大底转换 ${activeBase && activeBase.name ? activeBase.name : `大底${activeSlot}`} (${currentPeriodSum === 1 ? '1期' : `${currentPeriodSum}期和`}) [${minVal},${maxVal}]`,
+                    numbers: [...currentResults],
+                };
+        }
+
+        async function fetchDadiTransformCandidateForPeriod(period, slot, minErr, maxErr) {
+            const activeLines = getEffectiveLines(netLines);
+            const res = await fetch('/api/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    lines: activeLines,
+                    period_sum: period,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || `${period}期和分析失败`);
+            }
+            const basesForPeriod = data.dadiTransform && Array.isArray(data.dadiTransform.bases)
+                ? data.dadiTransform.bases
+                : [];
+            const baseForPeriod = basesForPeriod.find(base => String(base.slot) === String(slot));
+            if (!baseForPeriod) {
+                throw new Error(`未找到大底${slot}的转换数据`);
+            }
+            return dadiErrorUtils.buildDadiTransformCandidate({
+                period,
+                minErr,
+                maxErr,
+                base: baseForPeriod,
+                periodSumOffset: data.periodSumOffset,
+            });
+        }
+
+        async function addAllDadiTransformCandidates(btn) {
+            if (!netLines || !netLines.length) {
+                alert('请先加载数据');
+                return;
+            }
+            if (!dadiErrorUtils.buildDadiTransformCandidate) {
+                alert('批量备选工具未加载，请刷新页面后重试');
+                return;
+            }
+
+            const range = dadiErrorUtils.normalizeToleranceRange(
+                getCustomSelectValue(minInput),
+                getCustomSelectValue(maxInput)
+            );
+            const slot = activeSlot;
+            const oldHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.classList.add('is-busy');
+            btn.innerHTML = `
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2v4m0 12v4m10-10h-4M6 12H2"></path></svg>
+                正在加入...
+            `;
+
+            try {
+                const candidatePromises = Array.from({ length: 20 }, (_, index) =>
+                    fetchDadiTransformCandidateForPeriod(index + 1, slot, range.minErr, range.maxErr)
+                );
+                const candidates = await Promise.all(candidatePromises);
+                let addedCount = 0;
+                let skippedCount = 0;
+
+                candidates.forEach(candidate => {
+                    if (!candidate.numbers || !candidate.numbers.length) {
+                        skippedCount++;
+                        return;
+                    }
+                    if (isCandidateSourceKeyExists(candidate.sourceKey)) {
+                        skippedCount++;
+                        return;
+                    }
+                    addCandidate(candidate.sourceKey, candidate.label, candidate.numbers);
+                    addedCount++;
+                });
+
+                btn.innerHTML = `
+                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"></path></svg>
+                    已加入 ${addedCount} 项
+                `;
+                setTimeout(() => {
+                    btn.innerHTML = oldHtml;
+                    btn.disabled = false;
+                    btn.classList.remove('is-busy');
+                    candidateSyncCallbacks.forEach(cb => cb());
+                }, 1500);
+
+                if (addedCount === 0 && skippedCount > 0) {
+                    alert('1-20期和对应备选已存在或当前无结果');
+                }
+            } catch (err) {
+                console.error(err);
+                alert(err.message || '批量加入备选失败');
+                btn.innerHTML = oldHtml;
+                btn.disabled = false;
+                btn.classList.remove('is-busy');
+            }
         }
 
         switchButtons.forEach(btn => {
@@ -1577,21 +1677,21 @@ document.addEventListener('DOMContentLoaded', () => {
         // 添加到备选按钮
         const addCandidateBtnContainer = card.querySelector('#copyTransformBtn')?.closest('.result-action-group');
         if (addCandidateBtnContainer) {
-            const periodLabel = currentPeriodSum === 1 ? '1期' : `${currentPeriodSum}期和`;
             const addBtn = createAddCandidateButton(
-                () => {
-                    const minVal = getCustomSelectValue(minInput);
-                    const maxVal = getCustomSelectValue(maxInput);
-                    return `dadi-transform:${activeSlot}:${currentPeriodSum}:${minVal}:${maxVal}`;
-                },
-                () => {
-                    const activeBase = baseMap.get(activeSlot);
-                    const baseName = activeBase && activeBase.name ? activeBase.name : `大底${activeSlot}`;
-                    return `大底转换 ${baseName} (${periodLabel})`;
-                },
-                () => [...currentResults]
+                () => getCurrentDadiTransformCandidate().sourceKey,
+                () => getCurrentDadiTransformCandidate().label,
+                () => getCurrentDadiTransformCandidate().numbers
             );
+            const addAllBtn = document.createElement('button');
+            addAllBtn.type = 'button';
+            addAllBtn.className = 'add-candidate-btn add-all-candidate-btn';
+            addAllBtn.innerHTML = `
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                加入1-20期和备选
+            `;
+            addAllBtn.addEventListener('click', () => addAllDadiTransformCandidates(addAllBtn));
             addCandidateBtnContainer.appendChild(addBtn);
+            addCandidateBtnContainer.appendChild(addAllBtn);
         }
 
         copyBtn.addEventListener('click', async () => {
