@@ -40,6 +40,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const MATRIX_CELL_SIZE_STORAGE_KEY = 'lottery_matrix_cell_size';
     const MATRIX_MATCH_LAST_COL_MIN = 2;
     const MATRIX_MATCH_LAST_COL_MAX = 6;
+    const dadiErrorUtils = window.DadiErrorUtils || {};
+    const candidatePanelUtils = window.CandidatePanelUtils || {};
     const MATRIX_SOURCE_MODE_LABELS = {
         normal: '正常',
         skip1: '隔 1 期',
@@ -1069,6 +1071,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 将 period_sum 空间的号码转回 1 期空间
     function applyPeriodSumOffset(code, offset) {
+        if (dadiErrorUtils.applyPeriodSumOffset) {
+            return dadiErrorUtils.applyPeriodSumOffset(code, offset);
+        }
         if (!offset || code.length < 3) return code;
         return code.split('').map((ch, i) => ((parseInt(ch, 10) - (offset[i] || 0)) % 10 + 10) % 10).join('');
     }
@@ -1189,34 +1194,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
         function updateResults() {
-            let minErr = getCustomSelectValue(errMinSelect);
-            if (isNaN(minErr)) minErr = 0;
-            let maxErr = getCustomSelectValue(errMaxSelect);
-            if (isNaN(maxErr)) maxErr = 0;
+            const range = dadiErrorUtils.normalizeToleranceRange
+                ? dadiErrorUtils.normalizeToleranceRange(getCustomSelectValue(errMinSelect), getCustomSelectValue(errMaxSelect))
+                : {
+                    minErr: getCustomSelectValue(errMinSelect) || 0,
+                    maxErr: getCustomSelectValue(errMaxSelect) || 0,
+                };
+            let { minErr, maxErr } = range;
 
-            if (minErr > maxErr) {
+            if (!dadiErrorUtils.normalizeToleranceRange && minErr > maxErr) {
                 [minErr, maxErr] = [maxErr, minErr];
+            }
+
+            if (getCustomSelectValue(errMinSelect) !== minErr || getCustomSelectValue(errMaxSelect) !== maxErr) {
                 setCustomSelectValue(errMinSelect, minErr);
                 setCustomSelectValue(errMaxSelect, maxErr);
             }
 
-            const minCount = Math.max(0, totalSets - maxErr);
-            const maxCount = totalSets - minErr;
-            currentResults = [];
-
-            for (let i = 0; i < 1000; i++) {
-                const s = i.toString().padStart(3, '0');
-                const count = counts[s] || 0;
-                if (count >= minCount && count <= maxCount) {
-                    currentResults.push(s);
-                }
-            }
-
-            // 容错过滤完成后，将结果转回 1 期空间
-            if (periodSumOffset) {
-                currentResults = currentResults.map(code => applyPeriodSumOffset(code, periodSumOffset));
-                currentResults = [...new Set(currentResults)].sort();
-            }
+            currentResults = dadiErrorUtils.computeDadiErrorNumbers
+                ? dadiErrorUtils.computeDadiErrorNumbers(results, minErr, maxErr, periodSumOffset)
+                : [];
 
             errCountLabel.textContent = currentResults.length;
             errResultArea.innerHTML = currentResults.map(num => `<div class="grid-num-item">${num}</div>`).join('');
@@ -1231,6 +1228,113 @@ document.addEventListener('DOMContentLoaded', () => {
             candidateSyncCallbacks.forEach(cb => cb());
         }
 
+        function getCurrentDadiErrorCandidate() {
+            const minVal = getCustomSelectValue(errMinSelect);
+            const maxVal = getCustomSelectValue(errMaxSelect);
+            return dadiErrorUtils.buildDadiErrorCandidate
+                ? dadiErrorUtils.buildDadiErrorCandidate({
+                    period: currentPeriodSum,
+                    minErr: minVal,
+                    maxErr: maxVal,
+                    faultTolerance: results,
+                    periodSumOffset,
+                })
+                : {
+                    sourceKey: `dadi-err:${currentPeriodSum}:${minVal}:${maxVal}`,
+                    label: `容错分析 (${currentPeriodSum === 1 ? '1期' : `${currentPeriodSum}期和`}) [${minVal},${maxVal}]`,
+                    numbers: [...currentResults],
+                };
+        }
+
+        async function fetchDadiErrorCandidateForPeriod(period, minErr, maxErr) {
+            const activeLines = getEffectiveLines(netLines);
+            const res = await fetch('/api/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    lines: activeLines,
+                    period_sum: period,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || `${period}期和分析失败`);
+            }
+            return dadiErrorUtils.buildDadiErrorCandidate({
+                period,
+                minErr,
+                maxErr,
+                faultTolerance: data.dadiFaultTolerance,
+                periodSumOffset: data.periodSumOffset,
+            });
+        }
+
+        async function addAllDadiErrorCandidates(btn) {
+            if (!netLines || !netLines.length) {
+                alert('请先加载数据');
+                return;
+            }
+            if (!dadiErrorUtils.buildDadiErrorCandidate) {
+                alert('批量备选工具未加载，请刷新页面后重试');
+                return;
+            }
+
+            const range = dadiErrorUtils.normalizeToleranceRange(
+                getCustomSelectValue(errMinSelect),
+                getCustomSelectValue(errMaxSelect)
+            );
+            const oldHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.classList.add('is-busy');
+            btn.innerHTML = `
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2v4m0 12v4m10-10h-4M6 12H2"></path></svg>
+                正在加入...
+            `;
+
+            try {
+                const candidatePromises = Array.from({ length: 20 }, (_, index) =>
+                    fetchDadiErrorCandidateForPeriod(index + 1, range.minErr, range.maxErr)
+                );
+                const candidates = await Promise.all(candidatePromises);
+                let addedCount = 0;
+                let skippedCount = 0;
+
+                candidates.forEach(candidate => {
+                    if (!candidate.numbers || !candidate.numbers.length) {
+                        skippedCount++;
+                        return;
+                    }
+                    if (isCandidateSourceKeyExists(candidate.sourceKey)) {
+                        skippedCount++;
+                        return;
+                    }
+                    addCandidate(candidate.sourceKey, candidate.label, candidate.numbers);
+                    addedCount++;
+                });
+
+                btn.innerHTML = `
+                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"></path></svg>
+                    已加入 ${addedCount} 项
+                `;
+                setTimeout(() => {
+                    btn.innerHTML = oldHtml;
+                    btn.disabled = false;
+                    btn.classList.remove('is-busy');
+                    candidateSyncCallbacks.forEach(cb => cb());
+                }, 1500);
+
+                if (addedCount === 0 && skippedCount > 0) {
+                    alert('1-20期和对应备选已存在或当前无结果');
+                }
+            } catch (err) {
+                console.error(err);
+                alert(err.message || '批量加入备选失败');
+                btn.innerHTML = oldHtml;
+                btn.disabled = false;
+                btn.classList.remove('is-busy');
+            }
+        }
+
         initCustomSelect(errMinSelect, updateResults);
         initCustomSelect(errMaxSelect, updateResults);
         
@@ -1240,21 +1344,21 @@ document.addEventListener('DOMContentLoaded', () => {
         // 添加到备选按钮
         const addCandidateBtnContainer = card.querySelector('#copyErrBtn')?.closest('.result-action-group');
         if (addCandidateBtnContainer) {
-            const periodLabel = currentPeriodSum === 1 ? '1期' : `${currentPeriodSum}期和`;
             const addBtn = createAddCandidateButton(
-                () => {
-                    const minVal = getCustomSelectValue(errMinSelect);
-                    const maxVal = getCustomSelectValue(errMaxSelect);
-                    return `dadi-err:${currentPeriodSum}:${minVal}:${maxVal}`;
-                },
-                () => {
-                    const minVal = getCustomSelectValue(errMinSelect);
-                    const maxVal = getCustomSelectValue(errMaxSelect);
-                    return `容错分析 (${periodLabel}) [${minVal},${maxVal}]`;
-                },
-                () => [...currentResults]
+                () => getCurrentDadiErrorCandidate().sourceKey,
+                () => getCurrentDadiErrorCandidate().label,
+                () => getCurrentDadiErrorCandidate().numbers
             );
+            const addAllBtn = document.createElement('button');
+            addAllBtn.type = 'button';
+            addAllBtn.className = 'add-candidate-btn add-all-candidate-btn';
+            addAllBtn.innerHTML = `
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                加入1-20期和备选
+            `;
+            addAllBtn.addEventListener('click', () => addAllDadiErrorCandidates(addAllBtn));
             addCandidateBtnContainer.appendChild(addBtn);
+            addCandidateBtnContainer.appendChild(addAllBtn);
         }
 
         if (copyBtn) {
@@ -2652,10 +2756,6 @@ document.addEventListener('DOMContentLoaded', () => {
             numbers: [...numbers]
         });
         renderCandidatePanel();
-        // 自动展开面板
-        if (candidatePanel && candidatePanel.classList.contains('collapsed')) {
-            candidatePanel.classList.remove('collapsed');
-        }
     }
 
     function removeCandidate(id) {
@@ -2828,11 +2928,24 @@ document.addEventListener('DOMContentLoaded', () => {
         lastIntersectionResults = [];
     }
 
+    function setCandidatePanelHoverState(isHovering) {
+        if (!candidatePanel) return;
+        const shouldCollapse = candidatePanelUtils.getCandidatePanelCollapsed
+            ? candidatePanelUtils.getCandidatePanelCollapsed({ isHovering })
+            : !isHovering;
+        candidatePanel.classList.toggle('collapsed', shouldCollapse);
+    }
+
     // 绑定面板事件
+    if (candidatePanel) {
+        candidatePanel.addEventListener('mouseenter', () => setCandidatePanelHoverState(true));
+        candidatePanel.addEventListener('mouseleave', () => setCandidatePanelHoverState(false));
+        setCandidatePanelHoverState(false);
+    }
+
     if (candidateToggleTab) {
-        candidateToggleTab.addEventListener('click', () => {
-            if (candidatePanel) candidatePanel.classList.toggle('collapsed');
-        });
+        candidateToggleTab.addEventListener('focus', () => setCandidatePanelHoverState(true));
+        candidateToggleTab.addEventListener('blur', () => setCandidatePanelHoverState(false));
     }
 
     if (candidateClearAllBtn) {
