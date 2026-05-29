@@ -9,3 +9,4 @@ venv/
 lottery.db
 .vscode/
 .agent/
+*.har

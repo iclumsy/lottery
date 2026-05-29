@@ -81,6 +81,35 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!expects || expects.length === 0) return expects;
         return isRetreatMode ? expects.slice(0, -1) : expects;
     }
+
+    async function readJsonResponse(res, fallbackMessage) {
+        if (dadiErrorUtils.readJsonResponse) {
+            return dadiErrorUtils.readJsonResponse(res, fallbackMessage);
+        }
+
+        const contentType = res && res.headers ? (res.headers.get('content-type') || '') : '';
+        if (!contentType.toLowerCase().includes('application/json')) {
+            throw new Error(`${fallbackMessage}：服务器返回了非 JSON 响应 (HTTP ${res.status})`);
+        }
+
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || fallbackMessage);
+        }
+        return data;
+    }
+
+    async function fetchAnalyzeData(lines, period, fallbackMessage) {
+        const res = await fetch('/api/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                lines,
+                period_sum: period,
+            }),
+        });
+        return readJsonResponse(res, fallbackMessage);
+    }
     const matrixState = {
         allRows: [],
         allRowLabels: [],
@@ -782,18 +811,7 @@ document.addEventListener('DOMContentLoaded', () => {
         clearError();
 
         try {
-            const reqData = {
-                lines: activeLines,
-                period_sum: currentPeriodSum
-            };
-            const res = await fetch('/api/analyze', { 
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(reqData)
-            });
-
-            const data = await res.json();
-            if (!res.ok) { showError(data.error || '解析失败'); return; }
+            const data = await fetchAnalyzeData(activeLines, currentPeriodSum, '解析失败');
 
             if (data.parsedData) {
                 renderPreview(data.parsedData);
@@ -803,7 +821,7 @@ document.addEventListener('DOMContentLoaded', () => {
             updateDangerButtons(data.dangerPeriods || [], data.dangerPeriodGaps || {});
         } catch (err) {
             console.error(err);
-            showError('服务器请求失败');
+            showError(err.message || '服务器请求失败');
         }
     }
 
@@ -1248,18 +1266,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         async function fetchDadiErrorCandidateForPeriod(period, minErr, maxErr) {
             const activeLines = getEffectiveLines(netLines);
-            const res = await fetch('/api/analyze', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    lines: activeLines,
-                    period_sum: period,
-                }),
-            });
-            const data = await res.json();
-            if (!res.ok) {
-                throw new Error(data.error || `${period}期和分析失败`);
-            }
+            const data = await fetchAnalyzeData(activeLines, period, `${period}期和分析失败`);
             return dadiErrorUtils.buildDadiErrorCandidate({
                 period,
                 minErr,
@@ -1292,10 +1299,10 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
 
             try {
-                const candidatePromises = Array.from({ length: 20 }, (_, index) =>
-                    fetchDadiErrorCandidateForPeriod(index + 1, range.minErr, range.maxErr)
-                );
-                const candidates = await Promise.all(candidatePromises);
+                const candidates = [];
+                for (let period = 1; period <= 20; period++) {
+                    candidates.push(await fetchDadiErrorCandidateForPeriod(period, range.minErr, range.maxErr));
+                }
                 let addedCount = 0;
                 let skippedCount = 0;
 
@@ -1564,18 +1571,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         async function fetchDadiTransformCandidateForPeriod(period, slot, minErr, maxErr) {
             const activeLines = getEffectiveLines(netLines);
-            const res = await fetch('/api/analyze', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    lines: activeLines,
-                    period_sum: period,
-                }),
-            });
-            const data = await res.json();
-            if (!res.ok) {
-                throw new Error(data.error || `${period}期和分析失败`);
-            }
+            const data = await fetchAnalyzeData(activeLines, period, `${period}期和分析失败`);
             const basesForPeriod = data.dadiTransform && Array.isArray(data.dadiTransform.bases)
                 ? data.dadiTransform.bases
                 : [];
@@ -1616,10 +1612,10 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
 
             try {
-                const candidatePromises = Array.from({ length: 20 }, (_, index) =>
-                    fetchDadiTransformCandidateForPeriod(index + 1, slot, range.minErr, range.maxErr)
-                );
-                const candidates = await Promise.all(candidatePromises);
+                const candidates = [];
+                for (let period = 1; period <= 20; period++) {
+                    candidates.push(await fetchDadiTransformCandidateForPeriod(period, slot, range.minErr, range.maxErr));
+                }
                 let addedCount = 0;
                 let skippedCount = 0;
 
@@ -2869,28 +2865,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function computeIntersection(minErr, maxErr) {
-        if (candidatePool.length === 0) return [];
-        const totalSets = candidatePool.length;
-
-        // 统计每个号码出现在多少个备选中
-        const counts = new Map();
-        candidatePool.forEach(c => {
-            const seen = new Set(c.numbers);
-            seen.forEach(num => {
-                counts.set(num, (counts.get(num) || 0) + 1);
-            });
-        });
-
-        // 根据容错范围过滤
-        const minCount = Math.max(0, totalSets - maxErr);
-        const maxCount = totalSets - minErr;
-        const results = [];
-        counts.forEach((count, num) => {
-            if (count >= minCount && count <= maxCount) {
-                results.push(num);
-            }
-        });
-        return results.sort();
+        if (candidatePanelUtils.computeCandidateIntersection) {
+            return candidatePanelUtils.computeCandidateIntersection(candidatePool, minErr, maxErr);
+        }
+        return [];
     }
 
     function buildIntersectionToleranceOptions(total) {
@@ -2899,10 +2877,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const settingsTitle = document.getElementById('intersectionSettingsTitle');
         if (!intersectionErrMin || !intersectionErrMax) return;
 
-        // 容错范围 0 到 total-1
-        const maxTolerance = Math.max(0, total - 1);
-        const optionsHtml = Array.from({ length: maxTolerance + 1 }, (_, i) =>
-            `<div class="custom-option${i===0?' selected':''}">${i}</div>`
+        const toleranceValues = candidatePanelUtils.getIntersectionToleranceValues
+            ? candidatePanelUtils.getIntersectionToleranceValues(total)
+            : Array.from({ length: Math.max(0, total) + 1 }, (_, i) => i);
+        const optionsHtml = toleranceValues.map(value =>
+            `<div class="custom-option${value===0?' selected':''}">${value}</div>`
         ).join('');
         intersectionErrMin.querySelector('.custom-select-options').innerHTML = optionsHtml;
         intersectionErrMax.querySelector('.custom-select-options').innerHTML = optionsHtml;

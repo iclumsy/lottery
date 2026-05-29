@@ -22,6 +22,30 @@
         };
     }
 
+    async function readJsonResponse(response, fallbackMessage = '请求失败') {
+        const contentType = response && response.headers
+            ? (response.headers.get('content-type') || '')
+            : '';
+
+        if (!contentType.toLowerCase().includes('application/json')) {
+            const statusText = response && response.status ? `HTTP ${response.status}` : '未知状态';
+            throw new Error(`${fallbackMessage}：服务器返回了非 JSON 响应 (${statusText})`);
+        }
+
+        let data;
+        try {
+            data = await response.json();
+        } catch (err) {
+            throw new Error(`${fallbackMessage}：服务器返回的 JSON 无法解析`);
+        }
+
+        if (!response.ok) {
+            throw new Error((data && data.error) || fallbackMessage);
+        }
+
+        return data;
+    }
+
     function applyPeriodSumOffset(code, offsets) {
         if (!offsets) return code;
         return code.split('').map((ch, i) => {
@@ -161,5 +185,6 @@
         computeDadiTransformNumbers,
         getDadiErrorPeriodLabel,
         normalizeToleranceRange,
+        readJsonResponse,
     };
 }));
