@@ -110,6 +110,25 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         return readJsonResponse(res, fallbackMessage);
     }
+
+    async function fetchBatchCandidates({ mode, lines, minErr, maxErr, slot = null }) {
+        const body = {
+            mode,
+            lines,
+            minErr,
+            maxErr,
+        };
+        if (slot !== null && slot !== undefined) {
+            body.slot = slot;
+        }
+
+        const res = await fetch('/api/batch_candidates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        return readJsonResponse(res, '批量加入备选失败');
+    }
     const matrixState = {
         allRows: [],
         allRowLabels: [],
@@ -1264,18 +1283,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 };
         }
 
-        async function fetchDadiErrorCandidateForPeriod(period, minErr, maxErr) {
-            const activeLines = getEffectiveLines(netLines);
-            const data = await fetchAnalyzeData(activeLines, period, `${period}期和分析失败`);
-            return dadiErrorUtils.buildDadiErrorCandidate({
-                period,
-                minErr,
-                maxErr,
-                faultTolerance: data.dadiFaultTolerance,
-                periodSumOffset: data.periodSumOffset,
-            });
-        }
-
         async function addAllDadiErrorCandidates(btn) {
             if (!netLines || !netLines.length) {
                 alert('请先加载数据');
@@ -1299,10 +1306,14 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
 
             try {
-                const candidates = [];
-                for (let period = 1; period <= 20; period++) {
-                    candidates.push(await fetchDadiErrorCandidateForPeriod(period, range.minErr, range.maxErr));
-                }
+                const activeLines = getEffectiveLines(netLines);
+                const batchData = await fetchBatchCandidates({
+                    mode: 'dadi_error',
+                    lines: activeLines,
+                    minErr: range.minErr,
+                    maxErr: range.maxErr,
+                });
+                const candidates = Array.isArray(batchData.candidates) ? batchData.candidates : [];
                 let addedCount = 0;
                 let skippedCount = 0;
 
@@ -1569,25 +1580,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 };
         }
 
-        async function fetchDadiTransformCandidateForPeriod(period, slot, minErr, maxErr) {
-            const activeLines = getEffectiveLines(netLines);
-            const data = await fetchAnalyzeData(activeLines, period, `${period}期和分析失败`);
-            const basesForPeriod = data.dadiTransform && Array.isArray(data.dadiTransform.bases)
-                ? data.dadiTransform.bases
-                : [];
-            const baseForPeriod = basesForPeriod.find(base => String(base.slot) === String(slot));
-            if (!baseForPeriod) {
-                throw new Error(`未找到大底${slot}的转换数据`);
-            }
-            return dadiErrorUtils.buildDadiTransformCandidate({
-                period,
-                minErr,
-                maxErr,
-                base: baseForPeriod,
-                periodSumOffset: data.periodSumOffset,
-            });
-        }
-
         async function addAllDadiTransformCandidates(btn) {
             if (!netLines || !netLines.length) {
                 alert('请先加载数据');
@@ -1612,10 +1604,15 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
 
             try {
-                const candidates = [];
-                for (let period = 1; period <= 20; period++) {
-                    candidates.push(await fetchDadiTransformCandidateForPeriod(period, slot, range.minErr, range.maxErr));
-                }
+                const activeLines = getEffectiveLines(netLines);
+                const batchData = await fetchBatchCandidates({
+                    mode: 'dadi_transform',
+                    lines: activeLines,
+                    slot,
+                    minErr: range.minErr,
+                    maxErr: range.maxErr,
+                });
+                const candidates = Array.isArray(batchData.candidates) ? batchData.candidates : [];
                 let addedCount = 0;
                 let skippedCount = 0;
 

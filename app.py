@@ -702,6 +702,244 @@ def compute_dadi(k_period, n_lines, raw_parsed_tuple, L):
         'offsets': list(offset_all) if k_period > 1 else None
     }
 
+def normalize_tolerance_range(min_err, max_err):
+    try:
+        normalized_min = int(min_err)
+    except (TypeError, ValueError):
+        normalized_min = 0
+    try:
+        normalized_max = int(max_err)
+    except (TypeError, ValueError):
+        normalized_max = 0
+
+    if normalized_min > normalized_max:
+        normalized_min, normalized_max = normalized_max, normalized_min
+
+    return normalized_min, normalized_max
+
+def apply_period_sum_offset(code, offsets):
+    if not offsets:
+        return code
+    return ''.join(str((int(ch) - (offsets[i] if i < len(offsets) else 0)) % 10) for i, ch in enumerate(code))
+
+def compute_numbers_from_counts(counts, total_sets, min_err, max_err, period_sum_offset=None):
+    min_count = max(0, total_sets - max_err)
+    max_count = total_sets - min_err
+    numbers = []
+
+    for num in range(1000):
+        code = f'{num:03d}'
+        hit_count = counts.get(code, 0)
+        if min_count <= hit_count <= max_count:
+            numbers.append(code)
+
+    if not period_sum_offset:
+        return numbers
+
+    return sorted(set(apply_period_sum_offset(code, period_sum_offset) for code in numbers))
+
+def period_label(period):
+    return '1期' if period == 1 else f'{period}期和'
+
+def build_dadi_error_candidate(period, min_err, max_err, fault_tolerance, period_sum_offset=None):
+    numbers = compute_numbers_from_counts(
+        fault_tolerance.get('counts', {}),
+        fault_tolerance.get('total_sets', 0),
+        min_err,
+        max_err,
+        period_sum_offset
+    )
+    return {
+        'sourceKey': f'dadi-err:{period}:{min_err}:{max_err}',
+        'label': f'容错分析 ({period_label(period)}) [{min_err},{max_err}]',
+        'numbers': numbers,
+    }
+
+def build_dadi_transform_candidate(period, min_err, max_err, base, period_sum_offset=None):
+    slot = base.get('slot')
+    base_name = base.get('name') or f'大底{slot}'
+    numbers = compute_numbers_from_counts(
+        base.get('counts', {}),
+        base.get('totalSets', 0),
+        min_err,
+        max_err,
+        period_sum_offset
+    )
+    return {
+        'sourceKey': f'dadi-transform:{slot}:{period}:{min_err}:{max_err}',
+        'label': f'大底转换 {base_name} ({period_label(period)}) [{min_err},{max_err}]',
+        'numbers': numbers,
+    }
+
+def compute_analysis_payload(lines, period_sum, base_sets=None):
+    if not lines:
+        return {'error': '请输入数据进行分析（数据为空）。'}, 400
+
+    lines = [str(line).strip() for line in lines if str(line).strip()]
+
+    if len(lines) == 0:
+        return {'error': '请输入数据进行分析（无有效数据）。'}, 400
+
+    L = len(lines[0])
+
+    for i, line in enumerate(lines):
+        if not line.isdigit() or len(line) != L:
+            return {'error': f'输入格式错误：第 {i + 1} 行 "{line}" 不是 {L} 位纯数字。'}, 400
+
+    if len(lines) < 2:
+        return {'error': '至少需要输入2行数据（即至少包含1行历史记录与1行最新一期）。'}, 400
+
+    n_lines = len(lines)
+    raw_parsed = [[int(ch) for ch in line] for line in lines]
+
+    if period_sum > 1:
+        if n_lines < period_sum + 1:
+            return {'error': f'至少需要 {period_sum + 1} 行数据来进行 {period_sum} 期和分析。'}, 400
+
+        parsed = []
+        for i in range(n_lines - period_sum + 1):
+            window = raw_parsed[i:i + period_sum]
+            summed_row = []
+            for pos in range(L):
+                pos_sum = sum(row[pos] for row in window) % 10
+                summed_row.append(pos_sum)
+            parsed.append(summed_row)
+        n = len(parsed)
+    else:
+        parsed = raw_parsed
+        n = len(parsed)
+
+    # ═══ 1. 遗漏统计 ═══
+    last_appeared = [[-1] * 10 for _ in range(L)]
+    for i, digits in enumerate(parsed):
+        row_num = i + 1
+        for pos in range(L):
+            last_appeared[pos][digits[pos]] = row_num
+
+    gap_results = []
+    for pos in range(L):
+        max_gap = -1
+        candidates = []
+        for digit in range(10):
+            R = last_appeared[pos][digit]
+            gap = n if R == -1 else n - R
+            if gap > max_gap:
+                max_gap = gap
+                candidates = [digit]
+            elif gap == max_gap:
+                candidates.append(digit)
+        gap_results.append({
+            'position': pos + 1,
+            'maxGap': max_gap,
+            'candidates': candidates,
+            'is3Pos': False
+        })
+
+    if L >= 3:
+        last_appeared_3pos = [-1] * 10
+        for i, digits in enumerate(parsed):
+            row_num = i + 1
+            for pos in range(3):
+                last_appeared_3pos[digits[pos]] = row_num
+
+        max_gap_3pos = -1
+        candidates_3pos = []
+        all_gaps_3pos = {}
+        for digit in range(10):
+            R = last_appeared_3pos[digit]
+            gap = n if R == -1 else n - R
+            all_gaps_3pos[digit] = gap
+            if gap > max_gap_3pos:
+                max_gap_3pos = gap
+                candidates_3pos = [digit]
+            elif gap == max_gap_3pos:
+                candidates_3pos.append(digit)
+
+        gap_results.append({
+            'position': '前三',
+            'maxGap': max_gap_3pos,
+            'candidates': candidates_3pos,
+            'is3Pos': True,
+            'allGaps': all_gaps_3pos
+        })
+
+    raw_parsed_tuple = tuple(tuple(row) for row in raw_parsed)
+    dadi_results = compute_dadi(period_sum, n_lines, raw_parsed_tuple, L) or {}
+
+    if period_sum > 1:
+        base_data_list = parsed
+    else:
+        base_data_list = raw_parsed
+    base_data_tuple = tuple(tuple(row) for row in base_data_list)
+    base_n = len(base_data_list)
+
+    dadi_fault_tolerance = {'total_sets': 0, 'counts': {}}
+    danger_periods = []
+    danger_period_gaps = {}
+    raw_n = len(raw_parsed)
+    raw_parsed_for_danger = raw_parsed
+
+    period_sum_offset = [0] * L
+    if period_sum > 1:
+        ps_window = raw_parsed[n_lines - (period_sum - 1):]
+        for pos in range(min(3, L)):
+            period_sum_offset[pos] = sum(row[pos] for row in ps_window) % 10
+
+    for k in range(1, 21):
+        res_k = compute_dadi(k, base_n, base_data_tuple, L)
+        if res_k and 'dadi' in res_k:
+            dadi_fault_tolerance['total_sets'] += 1
+            for num in res_k['dadi']:
+                dadi_fault_tolerance['counts'][num] = dadi_fault_tolerance['counts'].get(num, 0) + 1
+
+            pk = []
+            if k > 1:
+                for i in range(raw_n - k + 1):
+                    window = raw_parsed_for_danger[i:i + k]
+                    pk.append([sum(row[p] for row in window) % 10 for p in range(L)])
+            else:
+                pk = raw_parsed_for_danger
+
+            nk = len(pk)
+            max_gap_for_k = 0
+            if nk > 0:
+                last_appeared_k = [[-1] * 10 for _ in range(min(3, L))]
+                for i, digits in enumerate(pk):
+                    row_num = i + 1
+                    for pos in range(min(3, L)):
+                        last_appeared_k[pos][digits[pos]] = row_num
+
+                for pos in range(min(3, L)):
+                    for digit in range(10):
+                        last_i = last_appeared_k[pos][digit]
+                        gap = nk if last_i == -1 else nk - last_i
+                        if gap > max_gap_for_k:
+                            max_gap_for_k = gap
+
+            if max_gap_for_k > 40:
+                danger_periods.append(k)
+                danger_period_gaps[k] = max_gap_for_k
+
+    transformed_data = ["".join(map(str, row)) for row in (parsed if period_sum > 1 else raw_parsed)]
+    if base_sets is None:
+        base_sets = load_dadi_base_sets()
+    dadi_transform = compute_dadi_transform(base_data_list, L, base_sets)
+
+    return {
+        'totalFiles': 1,
+        'totalLines': n_lines,
+        'parsedData': transformed_data,
+        'gapAnalysis': gap_results,
+        'dadiAnalysis': dadi_results,
+        'dadiFaultTolerance': dadi_fault_tolerance,
+        'dadiTransform': dadi_transform,
+        'dangerPeriods': danger_periods,
+        'dangerPeriodGaps': danger_period_gaps,
+        'offsets': dadi_results.get('offsets') if dadi_results else None,
+        'periodSum': period_sum,
+        'periodSumOffset': period_sum_offset if period_sum > 1 else None
+    }, 200
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -863,190 +1101,63 @@ def analyze():
     if period_sum < 1 or period_sum > 20:
         period_sum = 1
 
-    if not lines:
-        return jsonify({'error': '请输入数据进行分析（数据为空）。'}), 400
-    
-    # 清理行内的空白
-    lines = [str(line).strip() for line in lines if str(line).strip()]
-    
-    if len(lines) == 0:
-        return jsonify({'error': '请输入数据进行分析（无有效数据）。'}), 400
-        
-    # 获取基准位数 L
-    L = len(lines[0])
-    
-    # 验证纯数字格式并保证长度一致
-    for i, line in enumerate(lines):
-        if not line.isdigit() or len(line) != L:
-            return jsonify({'error': f'输入格式错误：第 {i + 1} 行 "{line}" 不是 {L} 位纯数字。'}), 400
+    payload, status = compute_analysis_payload(lines, period_sum)
+    return jsonify(payload), status
 
-    if len(lines) < 2:
-        return jsonify({'error': '至少需要输入2行数据（即至少包含1行历史记录与1行最新一期）。'}), 400
+@app.route('/api/batch_candidates', methods=['POST'])
+def batch_candidates():
+    req_data = request.get_json(silent=True) or {}
+    mode = str(req_data.get('mode') or '').strip()
+    lines = req_data.get('lines', [])
+    min_err, max_err = normalize_tolerance_range(req_data.get('minErr', 0), req_data.get('maxErr', 0))
 
-    n_lines = len(lines)
-    
-    # ═══ 预处理：将每行解析为数字列表 ═══
-    raw_parsed = [[int(ch) for ch in line] for line in lines]
-    
-    if period_sum > 1:
-        if n_lines < period_sum + 1:
-            return jsonify({'error': f'至少需要 {period_sum + 1} 行数据来进行 {period_sum} 期和分析。'}), 400
-            
-        parsed = []
-        for i in range(n_lines - period_sum + 1):
-            window = raw_parsed[i:i + period_sum]
-            summed_row = []
-            for pos in range(L):
-                pos_sum = sum(row[pos] for row in window) % 10
-                summed_row.append(pos_sum)
-            parsed.append(summed_row)
-        n = len(parsed)
-    else:
-        parsed = raw_parsed
-        n = len(parsed)
-    
-    # ═══ 1. 遗漏统计 ═══
-    last_appeared = [[-1] * 10 for _ in range(L)]
-    for i, digits in enumerate(parsed):
-        row_num = i + 1
-        for pos in range(L):
-            last_appeared[pos][digits[pos]] = row_num
+    if mode not in {'dadi_error', 'dadi_transform'}:
+        return jsonify({'error': 'mode 必须是 dadi_error 或 dadi_transform'}), 400
 
-    gap_results = []
-    for pos in range(L):
-        max_gap = -1
-        candidates = []
-        for digit in range(10):
-            R = last_appeared[pos][digit]
-            gap = n if R == -1 else n - R
-            if gap > max_gap:
-                max_gap = gap
-                candidates = [digit]
-            elif gap == max_gap:
-                candidates.append(digit)
-        gap_results.append({
-            'position': pos + 1,
-            'maxGap': max_gap,
-            'candidates': candidates,
-            'is3Pos': False
-        })
+    slot = None
+    if mode == 'dadi_transform':
+        try:
+            slot = int(req_data.get('slot'))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'slot 必须在 1 到 4 之间'}), 400
+        if slot < 1 or slot > 4:
+            return jsonify({'error': 'slot 必须在 1 到 4 之间'}), 400
 
-    # 3 位遗漏统计
-    if L >= 3:
-        last_appeared_3pos = [-1] * 10
-        for i, digits in enumerate(parsed):
-            row_num = i + 1
-            for pos in range(3):
-                last_appeared_3pos[digits[pos]] = row_num
-                
-        max_gap_3pos = -1
-        candidates_3pos = []
-        all_gaps_3pos = {}
-        for digit in range(10):
-            R = last_appeared_3pos[digit]
-            gap = n if R == -1 else n - R
-            all_gaps_3pos[digit] = gap
-            if gap > max_gap_3pos:
-                max_gap_3pos = gap
-                candidates_3pos = [digit]
-            elif gap == max_gap_3pos:
-                candidates_3pos.append(digit)
-                
-        gap_results.append({
-            'position': '前三',
-            'maxGap': max_gap_3pos,
-            'candidates': candidates_3pos,
-            'is3Pos': True,
-            'allGaps': all_gaps_3pos
-        })
-
-    # 仅保留遗漏统计、大底生成和容错分析
-
-    # ═══ 6. 大底生成 (DaDi Generation) ═══
-    # 将 raw_parsed 转换为 tuple 以便缓存
-    raw_parsed_tuple = tuple(tuple(row) for row in raw_parsed)
-    dadi_results = compute_dadi(period_sum, n_lines, raw_parsed_tuple, L) or {}
-    
-    # ═══ 7. 大底容错统计 (DaDi Fault Tolerance) & 全局遗漏预警 ═══
-    # 基于当前 period_sum 的数据作为基础数据
-    # 当 period_sum > 1 时，先计算 N 期和数据，再在其上迭代 k=1..20
-    if period_sum > 1:
-        base_data_list = parsed  # 已在上方计算好的 period_sum 求和数据
-    else:
-        base_data_list = raw_parsed
-    base_data_tuple = tuple(tuple(row) for row in base_data_list)
-    base_n = len(base_data_list)
-
-    dadi_fault_tolerance = {'total_sets': 0, 'counts': {}}
-    danger_periods = []
-    danger_period_gaps = {}
-    
-    # 遗漏预警始终基于原始 1 期数据，不受 period_sum 影响
-    raw_n = len(raw_parsed)
-    raw_parsed_for_danger = raw_parsed
-
-    # 计算 period_sum 的偏移量（用于将 N期和空间 转换回 1期空间）
-    period_sum_offset = [0] * L
-    if period_sum > 1:
-        ps_window = raw_parsed[n_lines - (period_sum - 1):]
-        for pos in range(min(3, L)):
-            period_sum_offset[pos] = sum(row[pos] for row in ps_window) % 10
-
-    for k in range(1, 21):
-        # 1. 大底部分 — 基于当前 period_sum 数据（计数在当前空间完成，前端过滤后再转换）
-        res_k = compute_dadi(k, base_n, base_data_tuple, L)
-        if res_k and 'dadi' in res_k:
-            dadi_fault_tolerance['total_sets'] += 1
-            for num in res_k['dadi']:
-                dadi_fault_tolerance['counts'][num] = dadi_fault_tolerance['counts'].get(num, 0) + 1
-            
-            # 2. 检查遗漏预警 — 始终基于原始 raw_parsed 数据
-            pk = []
-            if k > 1:
-                for i in range(raw_n - k + 1):
-                    window = raw_parsed_for_danger[i:i + k]
-                    pk.append([sum(row[p] for row in window) % 10 for p in range(L)])
-            else:
-                pk = raw_parsed_for_danger
-
-            nk = len(pk)
-            max_gap_for_k = 0
-            if nk > 0:
-                last_appeared_k = [[-1] * 10 for _ in range(min(3, L))]
-                for i, digits in enumerate(pk):
-                    row_num = i + 1
-                    for pos in range(min(3, L)):
-                        last_appeared_k[pos][digits[pos]] = row_num
-
-                for pos in range(min(3, L)):
-                    for digit in range(10):
-                        last_i = last_appeared_k[pos][digit]
-                        gap = nk if last_i == -1 else nk - last_i
-                        if gap > max_gap_for_k:
-                            max_gap_for_k = gap
-
-            if max_gap_for_k > 40:
-                danger_periods.append(k)
-                danger_period_gaps[k] = max_gap_for_k
-
-    transformed_data = ["".join(map(str, row)) for row in (parsed if period_sum > 1 else raw_parsed)]
     base_sets = load_dadi_base_sets()
-    # 大底转换：原始基底不变，19 组偏移基于变换后数据，计数在当前空间完成
-    dadi_transform = compute_dadi_transform(base_data_list, L, base_sets)
+    candidates = []
+
+    for period in range(1, 21):
+        analysis, status = compute_analysis_payload(lines, period, base_sets)
+        if status != 200:
+            return jsonify(analysis), status
+
+        period_sum_offset = analysis.get('periodSumOffset')
+        if mode == 'dadi_error':
+            candidate = build_dadi_error_candidate(
+                period,
+                min_err,
+                max_err,
+                analysis.get('dadiFaultTolerance') or {},
+                period_sum_offset
+            )
+        else:
+            bases = (analysis.get('dadiTransform') or {}).get('bases') or []
+            base = next((item for item in bases if str(item.get('slot')) == str(slot)), None)
+            if not base:
+                return jsonify({'error': f'未找到大底{slot}的转换数据'}), 400
+            candidate = build_dadi_transform_candidate(
+                period,
+                min_err,
+                max_err,
+                base,
+                period_sum_offset
+            )
+        candidates.append(candidate)
 
     return jsonify({
-        'totalFiles': 1,
-        'totalLines': n_lines,
-        'parsedData': transformed_data,
-        'gapAnalysis': gap_results,
-        'dadiAnalysis': dadi_results,
-        'dadiFaultTolerance': dadi_fault_tolerance,
-        'dadiTransform': dadi_transform,
-        'dangerPeriods': danger_periods,
-        'dangerPeriodGaps': danger_period_gaps,
-        'offsets': dadi_results.get('offsets') if dadi_results else None,
-        'periodSum': period_sum,
-        'periodSumOffset': period_sum_offset if period_sum > 1 else None
+        'success': True,
+        'mode': mode,
+        'candidates': candidates,
     })
 
 @app.route('/api/update_history', methods=['POST', 'GET'])
