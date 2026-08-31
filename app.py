@@ -195,7 +195,7 @@ def fetch_lottery_data(page_size=100):
     # 1. 优先尝试中国体彩网官方接口（最快，实时）
     try:
         data = fetch_from_sporttery(page_size=page_size)
-        return data, '中国体彩网官方'
+        return data, '中国体彩网官方', False
     except Exception as e:
         err_msg = f"中国体彩网官方获取失败: {e}"
         print(f"{err_msg}，正在尝试回退至 500 彩票网...")
@@ -204,7 +204,7 @@ def fetch_lottery_data(page_size=100):
     # 2. 回退到 500 彩票网
     try:
         data = fetch_from_500com()
-        return data, '500彩票网'
+        return data, '500彩票网', True
     except Exception as e:
         err_msg = f"500彩票网获取失败: {e}"
         print(err_msg)
@@ -261,7 +261,7 @@ def init_db():
     if row and row['count'] == 0:
         print("Database is empty, fetching initial data...")
         try:
-            records, source = fetch_lottery_data(page_size=100)
+            records, source, _ = fetch_lottery_data(page_size=100)
             for expect, digits, opentime in records:
                 cursor.execute(
                     'INSERT OR IGNORE INTO lottery_history (expect, opencode, opentime) VALUES (?, ?, ?)',
@@ -1226,7 +1226,7 @@ def batch_candidates():
 @app.route('/api/update_history', methods=['POST', 'GET'])
 def update_history():
     try:
-        records, source = fetch_lottery_data(page_size=100)
+        records, source, is_fallback = fetch_lottery_data(page_size=100)
         
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -1245,6 +1245,7 @@ def update_history():
         return jsonify({
             'success': True,
             'source': source,
+            'is_fallback': is_fallback,
             'added_count': added_count,
             'message': f'成功从【{source}】更新了 {added_count} 条新数据'
         })

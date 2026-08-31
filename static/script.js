@@ -797,11 +797,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 const updateRes = await fetch('/api/update_history', { method: 'POST' });
                 const updateData = await updateRes.json();
                 if (!updateRes.ok) {
-                    showError(updateData.error || '更新抓取失败');
+                    const errMsg = updateData.error || '更新抓取失败';
+                    showError(errMsg);
+                    showToast(errMsg, 'error');
+                } else {
+                    const sourceName = updateData.source || '官方接口';
+                    const isFallback = Boolean(updateData.is_fallback);
+                    const added = typeof updateData.added_count === 'number' ? updateData.added_count : 0;
+                    
+                    if (isFallback) {
+                        const statusText = added > 0 ? `新增 ${added} 期` : '当前已是最新';
+                        showToast(`⚠️ 官方接口暂时不可用，已自动切换至【${sourceName}】同步（${statusText}）`, 'warning', 4500);
+                    } else if (added > 0) {
+                        showToast(`已从【${sourceName}】同步最新开奖（新增 ${added} 期）`, 'success', 3500);
+                    } else {
+                        showToast(`当前已是最新开奖数据（数据源：${sourceName}）`, 'info', 3000);
+                    }
                 }
                 await loadHistoryData();
             } catch (err) {
                 showError('网络或服务端异常，请稍后重试');
+                showToast('网络或服务端异常，请稍后重试', 'error');
             } finally {
                 fetchNetBtn.disabled = false;
                 refreshUpdateButtonText();
@@ -2761,6 +2777,47 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     function clearError() {
         if (errorMsg) errorMsg.textContent = '';
+    }
+
+    function showToast(message, type = 'info', duration = 3000) {
+        let container = document.getElementById('appToastContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'appToastContainer';
+            container.className = 'app-toast-container';
+            document.body.appendChild(container);
+        }
+
+        const toast = document.createElement('div');
+        toast.className = `app-toast app-toast-${type}`;
+
+        let iconSvg = '';
+        if (type === 'success') {
+            iconSvg = '<svg class="toast-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>';
+        } else if (type === 'error') {
+            iconSvg = '<svg class="toast-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v4a1 1 0 102 0V7zm-1 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>';
+        } else if (type === 'warning') {
+            iconSvg = '<svg class="toast-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>';
+        } else {
+            iconSvg = '<svg class="toast-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>';
+        }
+
+        toast.innerHTML = `${iconSvg}<span class="toast-text">${message}</span>`;
+        container.appendChild(toast);
+
+        requestAnimationFrame(() => {
+            toast.classList.add('show');
+        });
+
+        setTimeout(() => {
+            toast.classList.remove('show');
+            toast.classList.add('hide');
+            setTimeout(() => {
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            }, 300);
+        }, duration);
     }
 
     async function copyToClipboard(text) {
