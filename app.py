@@ -138,6 +138,80 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+def fetch_from_sporttery(page_size=100):
+    url = f'https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=350133&provinceId=0&pageSize={page_size}&isVerify=1&pageNo=1'
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://static.sporttery.cn/'
+    }
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=10) as response:
+        content = response.read().decode('utf-8')
+    
+    data = json.loads(content)
+    if not data.get('success') and data.get('errorCode') != '0':
+        raise ValueError(f"体彩官网返回异常: {data.get('errorMessage')}")
+    
+    items = data.get('value', {}).get('list', [])
+    if not items:
+        raise ValueError("体彩官网未返回有效数据列表")
+    
+    results = []
+    for it in items:
+        expect = str(it.get('lotteryDrawNum') or '').strip()
+        raw_res = str(it.get('lotteryDrawResult') or '').strip()
+        opentime = str(it.get('lotteryDrawTime') or '').strip()
+        digits = ''.join(re.findall(r'\d', raw_res))
+        if expect and len(digits) == 5:
+            results.append((expect, digits, opentime))
+            
+    if not results:
+        raise ValueError("未能从体彩官网解析到有效的排列5数据")
+    return results
+
+def fetch_from_500com():
+    url = 'https://kaijiang.500.com/static/info/kaijiang/xml/plw/list.xml'
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    with urllib.request.urlopen(req, timeout=10) as response:
+        xml_data = response.read().decode('utf-8')
+    
+    root = ElementTree.fromstring(xml_data)
+    results = []
+    for xml_row in root.findall('row'):
+        expect = str(xml_row.get('expect') or '').strip()
+        opencode = str(xml_row.get('opencode') or '').strip()
+        opentime = str(xml_row.get('opentime') or '').strip()
+        if expect and opencode:
+            digits = opencode.replace(',', '').strip()
+            if len(digits) == 5:
+                results.append((expect, digits, opentime))
+                
+    if not results:
+        raise ValueError("未能从500彩票网解析到有效的排列5数据")
+    return results
+
+def fetch_lottery_data(page_size=100):
+    errors = []
+    # 1. 优先尝试中国体彩网官方接口（最快，实时）
+    try:
+        data = fetch_from_sporttery(page_size=page_size)
+        return data, '中国体彩网官方'
+    except Exception as e:
+        err_msg = f"中国体彩网官方获取失败: {e}"
+        print(f"{err_msg}，正在尝试回退至 500 彩票网...")
+        errors.append(err_msg)
+    
+    # 2. 回退到 500 彩票网
+    try:
+        data = fetch_from_500com()
+        return data, '500彩票网'
+    except Exception as e:
+        err_msg = f"500彩票网获取失败: {e}"
+        print(err_msg)
+        errors.append(err_msg)
+    
+    raise RuntimeError("所有开奖数据源均获取失败: " + "；".join(errors))
+
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -187,25 +261,14 @@ def init_db():
     if row and row['count'] == 0:
         print("Database is empty, fetching initial data...")
         try:
-            url = 'https://kaijiang.500.com/static/info/kaijiang/xml/plw/list.xml'
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=10) as response:
-                xml_data = response.read().decode('utf-8')
-            
-            root = ElementTree.fromstring(xml_data)
-            for xml_row in root.findall('row'):
-                expect = xml_row.get('expect')
-                opencode = xml_row.get('opencode')
-                opentime = xml_row.get('opentime', '')
-                if expect and opencode:
-                    digits = opencode.replace(',', '').strip()
-                    if len(digits) == 5:
-                        cursor.execute(
-                            'INSERT OR IGNORE INTO lottery_history (expect, opencode, opentime) VALUES (?, ?, ?)',
-                            (expect, digits, opentime)
-                        )
+            records, source = fetch_lottery_data(page_size=100)
+            for expect, digits, opentime in records:
+                cursor.execute(
+                    'INSERT OR IGNORE INTO lottery_history (expect, opencode, opentime) VALUES (?, ?, ?)',
+                    (expect, digits, opentime)
+                )
             conn.commit()
-            print("Initial data fetched successfully.")
+            print(f"Initial data fetched successfully from {source}.")
         except Exception as e:
             print(f"Failed to fetch initial data: {e}")
             
@@ -1163,34 +1226,28 @@ def batch_candidates():
 @app.route('/api/update_history', methods=['POST', 'GET'])
 def update_history():
     try:
-        url = 'https://kaijiang.500.com/static/info/kaijiang/xml/plw/list.xml'
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            xml_data = response.read().decode('utf-8')
-        
-        root = ElementTree.fromstring(xml_data)
+        records, source = fetch_lottery_data(page_size=100)
         
         conn = get_db_connection()
         cursor = conn.cursor()
         
         added_count = 0
-        for xml_row in root.findall('row'):
-            expect = xml_row.get('expect')
-            opencode = xml_row.get('opencode')
-            opentime = xml_row.get('opentime', '')
-            if expect and opencode:
-                digits = opencode.replace(',', '').strip()
-                if len(digits) == 5:
-                    cursor.execute(
-                        'INSERT OR IGNORE INTO lottery_history (expect, opencode, opentime) VALUES (?, ?, ?)',
-                        (expect, digits, opentime)
-                    )
-                    added_count += cursor.rowcount
+        for expect, digits, opentime in records:
+            cursor.execute(
+                'INSERT OR IGNORE INTO lottery_history (expect, opencode, opentime) VALUES (?, ?, ?)',
+                (expect, digits, opentime)
+            )
+            added_count += cursor.rowcount
                         
         conn.commit()
         conn.close()
         
-        return jsonify({'success': True, 'added_count': added_count, 'message': f'成功更新了 {added_count} 条新数据'})
+        return jsonify({
+            'success': True,
+            'source': source,
+            'added_count': added_count,
+            'message': f'成功从【{source}】更新了 {added_count} 条新数据'
+        })
     except Exception as e:
         return jsonify({'error': f'抓取开奖数据失败: {str(e)}'}), 500
 
